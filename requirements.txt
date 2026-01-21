@@ -1,0 +1,15 @@
+# Third-party dependencies detected from imports
+APScheduler
+PyMySQL
+jsonpatch
+loguru
+numpy
+pandas
+python-dateutil
+requests
+scikit-learn
+
+# Internal/unknown modules referenced in code (not found in repo)
+# common
+# services
+# settings

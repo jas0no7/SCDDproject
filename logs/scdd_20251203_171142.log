@@ -1,0 +1,154 @@
+[2025-12-03 17:11:42] [类型监测概览] INFO: 开始执行 runtypeMonitoringOverview，参数=(), {}
+[2025-12-03 17:11:42] [技改站点] INFO: 开始执行 runtechUpgradeStation，参数=(), {}
+[2025-12-03 17:11:42] [类型监测-城市公共] INFO: 开始执行 runcityPublic_typeMonitoring，参数=(), {}
+[2025-12-03 17:11:42] [技改站点回本周期预测] INFO: 开始执行 runtechUpgradePaybackForecast，参数=(), {}
+[2025-12-03 17:11:42] [重点站点外部竞争] INFO: 开始执行 runkeyStationExternalCompetition，参数=(), {}
+[2025-12-03 17:11:42] [全景概览] INFO: 开始执行 runpanoramaOverview，参数=(), {}
+[2025-12-03 17:11:42] [社会桩] INFO: 开始执行 runsocialCharger，参数=(), {}
+[2025-12-03 17:11:42] [产业及省公司接入] INFO: 开始执行 runindustryAndProvincialCompany，参数=(), {}
+[2025-12-03 17:11:42] [公司预警-站点] INFO: 开始执行 runcompanyWarningStations，参数=(), {}
+[2025-12-03 17:11:42] [公司预警-概览] INFO: 开始执行 runcompanyWarningOverview，参数=(), {}
+[2025-12-03 17:11:42] [重点站点内部竞争] INFO: 开始执行 runkeyStationInternalCompetition，参数=(), {}
+[2025-12-03 17:11:47] [全景概览] ERROR: runpanoramaOverview 执行出错: single positional indexer is out-of-bounds
+Traceback (most recent call last):
+  File "D:\项目文件夹\SCDD_EDAC_09\logs\log_decorator.py", line 12, in wrapper
+    result = func(*args, **kwargs)
+  File "D:\项目文件夹\SCDD_EDAC_09\modules\panoramaOverview.py", line 593, in runpanoramaOverview
+    d6 = DF_cba_org_data[DF_cba_org_data['cba_month'] == M].groupby('station_category').agg({'rec_data': 'sum'}).reset_index().sort_values(by='rec_data', ascending=False).iloc[0]['station_category']
+  File "E:\Python\lib\site-packages\pandas\core\indexing.py", line 1191, in __getitem__
+    return self._getitem_axis(maybe_callable, axis=axis)
+  File "E:\Python\lib\site-packages\pandas\core\indexing.py", line 1752, in _getitem_axis
+    self._validate_integer(key, axis)
+  File "E:\Python\lib\site-packages\pandas\core\indexing.py", line 1685, in _validate_integer
+    raise IndexError("single positional indexer is out-of-bounds")
+IndexError: single positional indexer is out-of-bounds
+[2025-12-03 17:11:48] [技改站点回本周期预测] ERROR: runtechUpgradePaybackForecast 执行出错: No objects to concatenate
+Traceback (most recent call last):
+  File "D:\项目文件夹\SCDD_EDAC_09\logs\log_decorator.py", line 12, in wrapper
+    result = func(*args, **kwargs)
+  File "D:\项目文件夹\SCDD_EDAC_09\modules\techUpgradePaybackForecast.py", line 728, in runtechUpgradePaybackForecast
+    DF_Break_even = pd.concat(DF_Break_even, ignore_index=True)
+  File "E:\Python\lib\site-packages\pandas\core\reshape\concat.py", line 382, in concat
+    op = _Concatenator(
+  File "E:\Python\lib\site-packages\pandas\core\reshape\concat.py", line 445, in __init__
+    objs, keys = self._clean_keys_and_objs(objs, keys)
+  File "E:\Python\lib\site-packages\pandas\core\reshape\concat.py", line 507, in _clean_keys_and_objs
+    raise ValueError("No objects to concatenate")
+ValueError: No objects to concatenate
+[2025-12-03 17:11:48] [公司预警-概览] ERROR: runcompanyWarningOverview 执行出错: division by zero
+Traceback (most recent call last):
+  File "D:\项目文件夹\SCDD_EDAC_09\logs\log_decorator.py", line 12, in wrapper
+    result = func(*args, **kwargs)
+  File "D:\项目文件夹\SCDD_EDAC_09\modules\companyWarningOverview.py", line 850, in runcompanyWarningOverview
+    rate1 = round((a2 / a1) * 100, 2)
+ZeroDivisionError: division by zero
+[2025-12-03 17:12:00] [重点站点内部竞争] ERROR: runkeyStationInternalCompetition 执行出错: 'int' object is not subscriptable
+Traceback (most recent call last):
+  File "D:\项目文件夹\SCDD_EDAC_09\logs\log_decorator.py", line 12, in wrapper
+    result = func(*args, **kwargs)
+  File "D:\项目文件夹\SCDD_EDAC_09\modules\keyStationInternalCompetition.py", line 1680, in runkeyStationInternalCompetition
+    basic2['month_days'] = basic2['cba_month'].apply(
+  File "E:\Python\lib\site-packages\pandas\core\series.py", line 4924, in apply
+    ).apply()
+  File "E:\Python\lib\site-packages\pandas\core\apply.py", line 1427, in apply
+    return self.apply_standard()
+  File "E:\Python\lib\site-packages\pandas\core\apply.py", line 1507, in apply_standard
+    mapped = obj._map_values(
+  File "E:\Python\lib\site-packages\pandas\core\base.py", line 921, in _map_values
+    return algorithms.map_array(arr, mapper, na_action=na_action, convert=convert)
+  File "E:\Python\lib\site-packages\pandas\core\algorithms.py", line 1743, in map_array
+    return lib.map_infer(values, mapper, convert=convert)
+  File "lib.pyx", line 2972, in pandas._libs.lib.map_infer
+  File "D:\项目文件夹\SCDD_EDAC_09\modules\keyStationInternalCompetition.py", line 1681, in <lambda>
+    lambda x: pd.Timestamp(int(x[:4]), int(x[-2:]), 1).days_in_month
+TypeError: 'int' object is not subscriptable
+[2025-12-03 17:12:02] [公司预警-站点] ERROR: runcompanyWarningStations 执行出错: cannot set a frame with no defined index and a scalar
+Traceback (most recent call last):
+  File "D:\项目文件夹\SCDD_EDAC_09\logs\log_decorator.py", line 12, in wrapper
+    result = func(*args, **kwargs)
+  File "D:\项目文件夹\SCDD_EDAC_09\modules\companyWarningStations.py", line 1368, in runcompanyWarningStations
+    sd9.loc[sd9['站点充电电费是否高于平均值'] == 3, '站点充电电费是否连续三月高于指标'] = '是'
+  File "E:\Python\lib\site-packages\pandas\core\indexing.py", line 911, in __setitem__
+    iloc._setitem_with_indexer(indexer, value, self.name)
+  File "E:\Python\lib\site-packages\pandas\core\indexing.py", line 1847, in _setitem_with_indexer
+    raise ValueError(
+ValueError: cannot set a frame with no defined index and a scalar
+[2025-12-03 17:12:08] [重点站点外部竞争] ERROR: runkeyStationExternalCompetition 执行出错: 'siteNum'
+Traceback (most recent call last):
+  File "E:\Python\lib\site-packages\pandas\core\indexes\base.py", line 3805, in get_loc
+    return self._engine.get_loc(casted_key)
+  File "index.pyx", line 167, in pandas._libs.index.IndexEngine.get_loc
+  File "index.pyx", line 196, in pandas._libs.index.IndexEngine.get_loc
+  File "pandas\\_libs\\hashtable_class_helper.pxi", line 7081, in pandas._libs.hashtable.PyObjectHashTable.get_item
+  File "pandas\\_libs\\hashtable_class_helper.pxi", line 7089, in pandas._libs.hashtable.PyObjectHashTable.get_item
+KeyError: 'siteNum'
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "D:\项目文件夹\SCDD_EDAC_09\logs\log_decorator.py", line 12, in wrapper
+    result = func(*args, **kwargs)
+  File "D:\项目文件夹\SCDD_EDAC_09\modules\keyStationExternalCompetition.py", line 713, in runkeyStationExternalCompetition
+    data_competitorStationCompareDimensions2[data_competitorStationCompareDimensions2['siteNum'] == '202110111714307']
+  File "E:\Python\lib\site-packages\pandas\core\frame.py", line 4102, in __getitem__
+    indexer = self.columns.get_loc(key)
+  File "E:\Python\lib\site-packages\pandas\core\indexes\base.py", line 3812, in get_loc
+    raise KeyError(key) from err
+KeyError: 'siteNum'
+[2025-12-03 17:12:18] [类型监测概览] ERROR: runtypeMonitoringOverview 执行出错: 'float' object has no attribute 'round'
+Traceback (most recent call last):
+  File "D:\项目文件夹\SCDD_EDAC_09\logs\log_decorator.py", line 12, in wrapper
+    result = func(*args, **kwargs)
+  File "D:\项目文件夹\SCDD_EDAC_09\modules\typeMonitoringOverview.py", line 3589, in runtypeMonitoringOverview
+    thismonth_pue = thismonth_pue.round(2)
+AttributeError: 'float' object has no attribute 'round'
+[2025-12-03 17:12:20] [类型监测-城市公共] ERROR: runcityPublic_typeMonitoring 执行出错: Column 'payback' has dtype object, cannot use method 'nsmallest' with this dtype
+Traceback (most recent call last):
+  File "D:\项目文件夹\SCDD_EDAC_09\logs\log_decorator.py", line 12, in wrapper
+    result = func(*args, **kwargs)
+  File "D:\项目文件夹\SCDD_EDAC_09\modules\cityPublic_typeMonitoring.py", line 6952, in runcityPublic_typeMonitoring
+    city_fianl_count.nsmallest(4, 'payback')
+  File "E:\Python\lib\site-packages\pandas\core\frame.py", line 7756, in nsmallest
+    return selectn.SelectNFrame(self, n=n, keep=keep, columns=columns).nsmallest()
+  File "E:\Python\lib\site-packages\pandas\core\methods\selectn.py", line 61, in nsmallest
+    return self.compute("nsmallest")
+  File "E:\Python\lib\site-packages\pandas\core\methods\selectn.py", line 201, in compute
+    raise TypeError(
+TypeError: Column 'payback' has dtype object, cannot use method 'nsmallest' with this dtype
+[2025-12-03 17:12:55] [社会桩] ERROR: runsocialCharger 执行出错: index 0 is out of bounds for axis 0 with size 0
+Traceback (most recent call last):
+  File "D:\项目文件夹\SCDD_EDAC_09\logs\log_decorator.py", line 12, in wrapper
+    result = func(*args, **kwargs)
+  File "D:\项目文件夹\SCDD_EDAC_09\modules\socialCharger.py", line 1052, in runsocialCharger
+    R7, R8, S7 = City_Dimension_3(df, time_column2, M, cal_str2, '社会桩', '站均功率利用率', '站均功率利用率（%）')
+  File "D:\项目文件夹\SCDD_EDAC_09\modules\socialCharger.py", line 278, in City_Dimension_3
+    S1 = f'平台{s1}本月{s2}区域维度TOP3：{gb1.iloc[0, 0]}、{gb1.iloc[1, 0]}、{gb1.iloc[2, 0]}'
+  File "E:\Python\lib\site-packages\pandas\core\indexing.py", line 1183, in __getitem__
+    return self.obj._get_value(*key, takeable=self._takeable)
+  File "E:\Python\lib\site-packages\pandas\core\frame.py", line 4212, in _get_value
+    return series._values[index]
+IndexError: index 0 is out of bounds for axis 0 with size 0
+[2025-12-03 17:13:42] [产业及省公司接入] ERROR: runindustryAndProvincialCompany 执行出错: index 0 is out of bounds for axis 0 with size 0
+Traceback (most recent call last):
+  File "D:\项目文件夹\SCDD_EDAC_09\logs\log_decorator.py", line 12, in wrapper
+    result = func(*args, **kwargs)
+  File "D:\项目文件夹\SCDD_EDAC_09\modules\industryAndProvincialCompany.py", line 1636, in runindustryAndProvincialCompany
+    a2 = round(gb1.loc[gb1['month'] == M, 'trans_energy'].values[0], 2)
+IndexError: index 0 is out of bounds for axis 0 with size 0
+[2025-12-03 17:14:46] [技改站点] ERROR: runtechUpgradeStation 执行出错: 'pre_station_name'
+Traceback (most recent call last):
+  File "D:\项目文件夹\SCDD_EDAC_09\logs\log_decorator.py", line 12, in wrapper
+    result = func(*args, **kwargs)
+  File "D:\项目文件夹\SCDD_EDAC_09\modules\techUpgradeStation.py", line 1817, in runtechUpgradeStation
+    reform_df = reform_df.merge(
+  File "E:\Python\lib\site-packages\pandas\core\frame.py", line 10832, in merge
+    return merge(
+  File "E:\Python\lib\site-packages\pandas\core\reshape\merge.py", line 170, in merge
+    op = _MergeOperation(
+  File "E:\Python\lib\site-packages\pandas\core\reshape\merge.py", line 794, in __init__
+    ) = self._get_merge_keys()
+  File "E:\Python\lib\site-packages\pandas\core\reshape\merge.py", line 1310, in _get_merge_keys
+    left_keys.append(left._get_label_or_level_values(lk))
+  File "E:\Python\lib\site-packages\pandas\core\generic.py", line 1911, in _get_label_or_level_values
+    raise KeyError(key)
+KeyError: 'pre_station_name'
