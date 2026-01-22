@@ -656,8 +656,9 @@ def runtypeMonitoringOverview():
     DF.loc[DF['station_no']=='300003000100017538','out']  =DF[DF['station_no']=='300003000100017538']['out'].values[0]+df_temp[df_temp['station_no']=='300003000100002473']['out'].values[0]
     DF.loc[DF['station_no']=='300003000100019487','out']  =DF[DF['station_no']=='300003000100019487']['out'].values[0]+df_temp[df_temp['station_no']=='300003013200011']['out'].values[0]+df_temp[df_temp['station_no']=='300003013200099']['out'].values[0]
     DF = DF[DF['investment_amount'] != 0 ]
+    DF = DF[DF['station_category'].isin(target_categories)]
     huibenzhandian = DF[DF['in'] > DF['out']]
-    huibenzhandian.groupby('station_category').agg({'station_no':'count'})
+    # huibenzhandian.groupby('station_category').agg({'station_no':'count'})
     hbzdgs = len(huibenzhandian)
     print("回本的站点个数hbzdgs:" ,hbzdgs )
     # 假设你要筛选 station_category 为 '公用站'
@@ -905,6 +906,7 @@ def runtypeMonitoringOverview():
             on a.station_no =b.station_no
             """ % (t1, t2)
     DF_org_data_pre_gun = SQL(sql)
+    DF_org_data_pre_gun = DF_org_data_pre_gun[DF_org_data_pre_gun['station_category'].isin(target_categories)]
 
     DF_org_data_pre_gun = DF_org_data_pre_gun.fillna(0)
     DF_org_data_pre_gun['charge_point_count'] = DF_org_data_pre_gun['dc_charge_point_count'].fillna(0) + \
@@ -941,7 +943,7 @@ def runtypeMonitoringOverview():
     # In[52]:
 
 
-    DF_cba_org_data_cur =DF_cba_org_data_cur[(DF_cba_org_data_cur['charge_point_count']!=0)&(DF_cba_org_data_cur['operation_status'] == '投运')]
+    DF_cba_org_data_cur =DF_cba_org_data_cur[DF_cba_org_data_cur['charge_point_count']!=0]
     DF_cba_org_data_cur =DF_cba_org_data_cur[DF_cba_org_data_cur['plat_data_charging_volume']!=0]
 
 
@@ -1096,7 +1098,7 @@ def runtypeMonitoringOverview():
     # 表和字段注释
     table_comment = "类型检测_首页_运营情况"
     column_comments = {
-        'Operational_status': '投资情况',
+        'Operational_status': '运营情况',
         'update_time' : '更新日期'
     }
     DF_Operational_status = pd.DataFrame([{
@@ -3304,7 +3306,7 @@ def runtypeMonitoringOverview():
     # In[211]:
 
 
-    huibenzhandian = DF[DF['in'] > DF['out']]
+
     hbzdgs = len(huibenzhandian)
     print("回本的站点个数hbzdgs:" ,hbzdgs )
     # 假设你要筛选 station_category 为 '公用站'
@@ -3472,9 +3474,9 @@ def runtypeMonitoringOverview():
 
 
     if thismonth_pue >=  lastmonth_pue:
-        t1 = "本月功率利用率环比上升，运营效率稳步提升"
+        q1 = "本月功率利用率环比上升，运营效率稳步提升"
     else :
-        t1 = "本月功率利用率环比下降，运营效率有所退步"
+        q1 = "本月功率利用率环比下降，运营效率有所退步"
 
 
     # ### 设备质量维度
@@ -3509,9 +3511,9 @@ def runtypeMonitoringOverview():
 
 
     if (thismonth_yicichenggong >= lastmonth_yicichenggong) :
-        t2 = "本月一次成功率环比上升，设备可靠性稳步提升"
+        q2 = "本月一次成功率环比上升，设备可靠性稳步提升"
     else :
-        t2 = "本月一次成功率环比下降，设备可靠性退步"
+        q2 = "本月一次成功率环比下降，设备可靠性退步"
 
 
     # #### 可用率
@@ -3574,10 +3576,10 @@ def runtypeMonitoringOverview():
 
 
     if  (thismonth_maoli > lastmonth_maoli):
-        t3 = "本月毛利环比上升，经济效益向好发展"
+        q3 = "本月毛利环比上升，经济效益向好发展"
     else :
 
-        t3 = "本月毛利环比下降，经济效益退步"
+        q3 = "本月毛利环比下降，经济效益退步"
 
 
     # ### 运营情况维度
@@ -3612,9 +3614,9 @@ def runtypeMonitoringOverview():
 
 
     if thismonth_workorders > lastmonth_workorders:
-         t4 = "本月单桩工单数量环比上升，运维压力有所增加"
+        q4 = "本月单桩工单数量环比上升，运维压力有所增加"
     else :
-        t4 = "本月单桩工单数量环比下降，运维压力有所缓解"
+        q4 = "本月单桩工单数量环比下降，运维压力有所缓解"
 
 
     # ### 写入数据库
@@ -3938,7 +3940,7 @@ def runtypeMonitoringOverview():
                 {"name": "本月单枪日均充电量", "value": round(dqrjcdl_bysj,2), "unit": 'kWh'},
                     {"name": "本月功率利用率均值为", "value": pue_value, "unit": '%'}
             ],
-            "trend": t1
+            "trend": q1
         },
         {
             "title": "经营情况",
@@ -3946,7 +3948,7 @@ def runtypeMonitoringOverview():
                 {"name": "本月营收", "value": float(benyueshouyi), "unit": '万元'},
                 {"name": "本月毛利", "value": float(benyuemaoli), "unit": '万元'}
             ],
-            "trend": t3
+            "trend": q3
         },
         {
             "title": "设备质量",
@@ -3954,14 +3956,14 @@ def runtypeMonitoringOverview():
                 {"name": "本月充电枪一次成功率均值为", "value": float(thismonth_yicichenggong), "unit": '%'},
                 {"name": "本月充电枪可用率均值为", "value": float(keyonglv_benyue), "unit": '%'}
             ],
-            "trend": t2
+            "trend": q2
         },
         {
             "title": "运维情况",
             "content": [
                 {"name": "本月单桩工单数量", "value": float(thismonth_workorders), "unit": '单'}
             ],
-            "trend": t4
+            "trend": q4
         }
     ]
 

@@ -1189,7 +1189,8 @@ def runsocialCharger():
 
 
     # 函数调用
-    R10, S9, S10, x3 = Site_Dimension_2(df, time_column3, M_DF, cal_str3, '平台本月充电量', '充电量', 'kWh', M, last_year_month_str)
+    R10, S9, S10, x3 = Site_Dimension_2(df, time_column3, M_DF, cal_str3, '平台月充电量', '充电量', 'kWh', M, last_year_month_str)
+    R10['平台月充电量'] = R10['平台月充电量'].round(2)
     print('S9:', S9)
     print('S10:', S10)
     print('R10:\n', R10)
@@ -1203,7 +1204,7 @@ def runsocialCharger():
     # In[86]:
 
 
-    x3 = round(R10[R10['时间'].str.contains(str(year))]['平台本月充电量'].sum(), 2)
+    x3 = round(R10[R10['时间'].str.contains(str(year))]['平台月充电量'].sum(), 2)
 
     # In[87]:
 
@@ -1644,7 +1645,7 @@ def runsocialCharger():
 
 
     # 函数调用
-    R20, S17, S18, x5 = Site_Dimension_2(df, time_column5, M_DF, cal_str5, '本月公司分成收入', '分成收入', '元', M, last_year_month_str)
+    R20, S17, S18, x5 = Site_Dimension_2(df, time_column5, M_DF, cal_str5, '公司分成收入', '分成收入', '元', M, last_year_month_str)
     print('R20:\n', R20)
     print('S17\n:', S17)
     print('S18\n:', S18)
@@ -1658,7 +1659,7 @@ def runsocialCharger():
     # In[118]:
 
 
-    x5 = round(R20[R20['时间'].str.contains(str(year))]['本月公司分成收入'].sum(), 2)
+    x5 = round(R20[R20['时间'].str.contains(str(year))]['公司分成收入'].sum(), 2)
 
     # In[119]:
 
@@ -1674,7 +1675,7 @@ def runsocialCharger():
 
 
     DF1 = bar_chart(R20, "时间", '元', M)
-    V = [['平台公司分成收入', S17, '元'], ['累计同比增长', S18, '%']]
+    V = [['平台本月公司分成收入', S17, '元'], ['累计同比增长', S18, '%']]
     DF = word(V, DF1)
     DF
 
@@ -1917,6 +1918,8 @@ def runsocialCharger():
         d2 = d2.rename(columns={c2: t2})
         d2 = calculate_monthly_growth(d2, 'month', t2)
         d2.rename(columns={'YoY': '同比增长率'}, inplace=True)
+        d2['同比增长率'] = d2['同比增长率'].apply(lambda x: round(x * 100, 2) if not pd.isna(x) else np.nan) #转化为百分比数据
+        d2['同比增长率'] = d2['同比增长率'].fillna(0) #空值处理
 
         # 新增：替换无穷大为0
         d2['同比增长率'] = d2['同比增长率'].replace([np.inf, -np.inf], 0)
@@ -1927,7 +1930,7 @@ def runsocialCharger():
         try:
             r = d4[d4['station_no'] == no]['rank'].values[0]
         except IndexError:
-            print("警告：数组为空，无法访问索引 0！")
+            # print("警告：数组为空，无法访问索引 0！")
             value = None  # 或其他默认值
             r = R
 
@@ -2089,9 +2092,9 @@ def runsocialCharger():
     for i in range(len(df_NO)):
         no = df_NO.iloc[i]['station_no']
         station_name = df_NO.iloc[i]['station_name']
-        print(no, station_name)
-        d3, T1, T2, x5 = imp_station(DF_trans_energy, 'ym', 'trans_energy', '社会桩接入站点平均水平', '每月充电量', M_DF, no, R, M)
-        data1.append(d3[d3['month'].str.contains(str(year))]['每月充电量'].sum())  # 单位：把
+        # print(no, station_name)
+        d3, T1, T2, x5 = imp_station(DF_trans_energy, 'ym', 'trans_energy', '社会桩接入站点平均水平', '月充电量', M_DF, no, R, M)
+        data1.append(d3[d3['month'].str.contains(str(year))]['月充电量'].sum())  # 单位：把
         d3.fillna(0, inplace=True)
         d3 = d3.sort_values(by='month', ascending=True)
         DF1 = bar_chart(d3, 'month', 'kWh', M)
@@ -2100,7 +2103,7 @@ def runsocialCharger():
         DF2['station_name'] = station_name
         DF2['station_no'] = no
         DF = pd.concat([DF, DF2])
-        print(no, station_name, '已运行完成')
+        # print(no, station_name, '已运行完成')
 
     # In[148]:
 
@@ -2225,8 +2228,8 @@ def runsocialCharger():
         no = df_NO.iloc[i]['station_no']
         station_name = df_NO.iloc[i]['station_name']
         print(no, station_name)
-        d3, T1, T2, x6 = imp_station(DF_profit_amount, 'ym', 'dd_profit_amount', '社会桩接入站点平均水平', '每月公司分成收入', M_DF, no, R, M)
-        data2.append(d3[d3['month'].str.contains(str(year))]['每月公司分成收入'].sum())  # 单位：把
+        d3, T1, T2, x6 = imp_station(DF_profit_amount, 'ym', 'dd_profit_amount', '社会桩接入站点平均水平', '月公司分成收入', M_DF, no, R, M)
+        data2.append(d3[d3['month'].str.contains(str(year))]['月公司分成收入'].sum())  # 单位：把
         d3.fillna(0, inplace=True)
         d3 = d3.sort_values(by='month', ascending=True)
         DF1 = bar_chart(d3, 'month', '元', M)
@@ -2301,8 +2304,8 @@ def runsocialCharger():
         no = df_NO.iloc[i]['station_no']
         station_name = df_NO.iloc[i]['station_name']
         print(no, station_name)
-        d3, T1, T2, x7 = imp_station(DF_sr_amount, 'ym', 'trans_amount', '社会桩接入站点平均水平', '每月充电收入', M_DF, no, R, M)
-        data3.append(d3[d3['month'].str.contains(str(year))]['每月充电收入'].sum())  # 单位：把
+        d3, T1, T2, x7 = imp_station(DF_sr_amount, 'ym', 'trans_amount', '社会桩接入站点平均水平', '月充电收入', M_DF, no, R, M)
+        data3.append(d3[d3['month'].str.contains(str(year))]['月充电收入'].sum())  # 单位：把
         d3.fillna(0, inplace=True)
         d3 = d3.sort_values(by='month', ascending=True)
         DF1 = bar_chart(d3, 'month', '元', M)
@@ -2371,9 +2374,9 @@ def runsocialCharger():
     for i in range(len(df_NO)):
         no = df_NO.iloc[i]['station_no']
         station_name = df_NO.iloc[i]['station_name']
-        print(no, station_name)
-        d3, T1, T2, x7 = imp_station(DF_trans_energy, 'ym', 'trans_energy_day', '社会桩接入站点平均水平', '每月单枪日均充电量', M_DF, no, R, M)
-        data4.append(d3[d3['month'].str.contains(str(year))]['每月单枪日均充电量'].mean())  # 单位：把
+        # print(no, station_name)
+        d3, T1, T2, x7 = imp_station(DF_trans_energy, 'ym', 'trans_energy_day', '社会桩接入站点平均水平', '单枪日均充电量', M_DF, no, R, M)
+        data4.append(d3[d3['month'].str.contains(str(year))]['单枪日均充电量'].mean())  # 单位：把
         d3.fillna(0, inplace=True)
         d3 = d3.sort_values(by='month', ascending=True)
         DF1 = bar_chart(d3, 'month', 'kWh', M)
@@ -2382,7 +2385,7 @@ def runsocialCharger():
         DF2['station_name'] = station_name
         DF2['station_no'] = no
         DF = pd.concat([DF, DF2])
-        print(no, station_name, '已运行完成', len(DF))
+        # print(no, station_name, '已运行完成', len(DF))
     dp_social_import_gun_energy = DF
 
     # In[164]:
@@ -2426,7 +2429,7 @@ def runsocialCharger():
     DF_plat_data_order = DF_plat_data_order[DF_plat_data_order['ym'].notna()]
     DF_plat_data_order['day'] = DF_plat_data_order['ym'].apply(get_days_in_month)
     DF_plat_data_order['trans_energy'] = DF_plat_data_order['trans_energy'].astype('float')
-    DF_plat_data_order['pue'] = DF_plat_data_order['trans_energy'] / DF_plat_data_order['station_capacity'] / DF_plat_data_order['day'] / 24
+    DF_plat_data_order['pue'] = (DF_plat_data_order['trans_energy'] / DF_plat_data_order['station_capacity'] / DF_plat_data_order['day'] / 24)*100
 
     # In[ ]:
 
@@ -2439,18 +2442,18 @@ def runsocialCharger():
     for i in range(len(df_NO)):
         no = df_NO.iloc[i]['station_no']
         station_name = df_NO.iloc[i]['station_name']
-        print(no, station_name)
-        d3, T1, T2, x8 = imp_station(DF_plat_data_order, 'ym', 'pue', '社会桩接入站点平均水平', '每月站点功率利用率', M_DF, no, R, M)
-        data5.append(d3[d3['month'].str.contains(str(year))]['每月站点功率利用率'].mean())  # 单位：个
+        # print(no, station_name)
+        d3, T1, T2, x8 = imp_station(DF_plat_data_order, 'ym', 'pue', '社会桩接入站点平均水平', '站点功率利用率', M_DF, no, R, M)
+        data5.append(d3[d3['month'].str.contains(str(year))]['站点功率利用率'].mean())  # 单位：个
         d3.fillna(0, inplace=True)
         d3 = d3.sort_values(by='month', ascending=True)
         DF1 = bar_chart(d3, 'month', '%', M)
-        V = [['本月度站点功率利用率为', str(x8 * 100), '%'], ['社会桩接入站点平均水平为', str(T1 * 100), '%'], ['本月度站点排名', T2, '']]
+        V = [['本月度站点功率利用率为', str(x8), '%'], ['社会桩接入站点平均水平为', str(T1), '%'], ['本月度站点排名', T2, '']]
         DF2 = word(V, DF1)
         DF2['station_name'] = station_name
         DF2['station_no'] = no
         DF = pd.concat([DF, DF2])
-        print(no, station_name, '已运行完成', len(DF))
+        # print(no, station_name, '已运行完成', len(DF))
     dp_social_import_pue = DF
 
     # In[168]:
@@ -2705,11 +2708,11 @@ def runsocialCharger():
 
     D = []
     for no in df_NO['station_no']:
-        print(no)
+        # print(no)
         try:
             r = df_amount_1[df_amount_1['station_no'] == no]['Rank'].values[0]
         except IndexError:
-            print("警告：数组为空，无法访问索引 0！")
+            # print("警告：数组为空，无法访问索引 0！")
             value = None  # 或其他默认值
             r = len(df_NO)
         D.append([no, r, len(df_NO)])
@@ -2801,11 +2804,11 @@ def runsocialCharger():
 
     D = []
     for no in df_NO['station_no']:
-        print(no)
+        # print(no)
         try:
             r = DF_trans_energy[DF_trans_energy['station_no'] == no]['Rank'].values[0]
         except IndexError:
-            print("警告：数组为空，无法访问索引 0！")
+            # print("警告：数组为空，无法访问索引 0！")
             value = None  # 或其他默认值
             r = len(df_NO)
         D.append([no, r])
@@ -2842,7 +2845,7 @@ def runsocialCharger():
 
     DF = pd.DataFrame(columns=['data', 'titles', 'labels', 'units', 'month', 'station_name', 'station_no'])
     for i in range(len(df_NO)):
-        print(df_NO.iloc[i]['station_name'], df_NO.iloc[i]['station_no'])
+        # print(df_NO.iloc[i]['station_name'], df_NO.iloc[i]['station_no'])
         titles = {'chargeRanking': '站点单枪日均充电量排名', 'incomeRanking': '站点单枪充电收入排名'}
         json_titles = titles
         #     print(json_titles)

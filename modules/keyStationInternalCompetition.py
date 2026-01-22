@@ -2286,15 +2286,31 @@ def runkeyStationInternalCompetition():
 
     # 排名函数
     def Rank(D, C, C1):
-        D_1 = D[D['station_category'] == '高速公共']
-        D_1 = D_1.copy()
-        D_1[C1] = D_1[C].rank(ascending=False, method='dense').astype('Int64')
-        D_2 = D[D['station_category'] == '城市公共']
-        D_2 = D_2.copy()
-        D_2[C1] = D_2[C].rank(ascending=False, method='dense').astype('Int64')
-        D_3 = D[D['station_category'] == '重卡专用']
-        D_3 = D_3.copy()
-        D_3[C1] = D_3[C].rank(ascending=False, method='dense').astype('Int64')
+        # 先检查是否存在electrical_loss列，且当前要排名的列是它
+        is_electrical_loss = (C == "electrical_loss") and ("electrical_loss" in D.columns)
+
+        # 处理高速公共类型
+        D_1 = D[D['station_category'] == '高速公共'].copy()
+        if is_electrical_loss:
+            # 负向指标正向化：值越小，负数越大，降序排名越靠前
+            D_1[C1] = (-D_1[C]).rank(ascending=False, method='dense').astype('Int64')
+        else:
+            D_1[C1] = D_1[C].rank(ascending=False, method='dense').astype('Int64')
+
+        # 处理城市公共类型
+        D_2 = D[D['station_category'] == '城市公共'].copy()
+        if is_electrical_loss:
+            D_2[C1] = (-D_2[C]).rank(ascending=False, method='dense').astype('Int64')
+        else:
+            D_2[C1] = D_2[C].rank(ascending=False, method='dense').astype('Int64')
+
+        # 处理重卡专用类型
+        D_3 = D[D['station_category'] == '重卡专用'].copy()
+        if is_electrical_loss:
+            D_3[C1] = (-D_3[C]).rank(ascending=False, method='dense').astype('Int64')
+        else:
+            D_3[C1] = D_3[C].rank(ascending=False, method='dense').astype('Int64')
+
         return D_1, D_2, D_3
 
     # ### TOPSIS函数定义
@@ -2359,9 +2375,37 @@ def runkeyStationInternalCompetition():
 
     # In[378]:
 
-    
+    # 定义一个健壮的计算函数
+    def calculate_charge_points(x):
+        """
+        计算充电桩总数：提取直流和交流充电桩数量并求和
+        参数 x: charge_point_count 列的单个值
+        返回: 充电桩总数（整数）
+        """
+        # 1. 处理空值（None/空字符串）
+        if x is None or x == '' or pd.isna(x):
+            return 0
+        try:
+            # 2. 按 | 分割字符串（核心逻辑）
+            parts = x.split('|')
+            dc_count = 0  # 直流桩数量
+            ac_count = 0  # 交流桩数量
+            # 3. 提取直流桩数量（处理边界情况）
+            if len(parts) > 0 and '直流' in parts[0]:
+                dc_part = parts[0].split('直流')[1].strip()  # 去除多余空格
+                dc_count = int(dc_part) if dc_part else 0
+            # 4. 提取交流桩数量（处理边界情况）
+            if len(parts) > 1 and '交流' in parts[1]:
+                ac_part = parts[1].split('交流')[1].strip()  # 去除多余空格
+                ac_count = int(ac_part) if ac_part else 0
+            # 5. 返回总数
+            return dc_count + ac_count
+        # 捕获所有可能的异常（分割失败、索引越界、数字转换失败等）
+        except (IndexError, ValueError):
+            return 0
 
-    DF_SCDD['charge_point_count'] = (DF_SCDD['charge_point_count'].apply(lambda x:x if isinstance(x,str) else '直流0|交流0').apply(lambda x:x if '|' in x else '直流0|交流0').apply(lambda x:x.split('|')[0].replace('直流','').strip()).apply(lambda x:int(x)if x.isdigit() else 0) + DF_SCDD['charge_point_count'].apply(lambda x : x if isinstance (x,str) else '直流0|交流0').apply(lambda x:x if '|' in x else '直流0|交流0').apply(lambda x:x.split('|')[0].replace('直流','').strip()).apply(lambda x:int(x)if x.isdigit() else 0))
+    # 应用函数到目标列
+    DF_SCDD['charge_point_count'] = DF_SCDD['charge_point_count'].apply(calculate_charge_points)
     # 将总桩数列转换为float格式
     DF_SCDD['charge_point_count'] = DF_SCDD['charge_point_count'].astype(float)
     DF_SCDD['charge_point_count_kW'] = DF_SCDD['station_capacity'] / DF_SCDD['charge_point_count'].replace(0,np.nan)
@@ -2791,7 +2835,7 @@ def runkeyStationInternalCompetition():
             "yAxisName": "",
             "markLineName": "平均值",
             "xAxis": str(avg_dict[source_name]["经济效益得分"]),
-            "remark": ["经济效益得分根据静态投资回收进度减去设备折旧进度，通过TOPSIS算法进行评分。"]
+            "remark": ["经济效益得分以静态投资回收进度扣减设备折旧进度为基础，通过划定最优、最劣参考基准并计算相对距离的方式量化评分。"]
         })
 
         # 静态投资回收进度
@@ -2807,7 +2851,7 @@ def runkeyStationInternalCompetition():
             "yAxisName": "%",
             "markLineName": "平均值",
             "xAxis": str(avg_dict[source_name]["静态投资回收进度"]),
-            "remark": ["经济效益得分根据静态投资回收进度减去设备折旧进度，通过TOPSIS算法进行评分。"]
+            "remark": ["经济效益得分以静态投资回收进度扣减设备折旧进度为基础，通过划定最优、最劣参考基准并计算相对距离的方式量化评分。"]
         })
 
         # 设备折旧进度
@@ -2823,7 +2867,7 @@ def runkeyStationInternalCompetition():
             "yAxisName": "%",
             "markLineName": "平均值",
             "xAxis": str(avg_dict[source_name]["设备折旧进度"]),
-            "remark": ["经济效益得分根据静态投资回收进度减去设备折旧进度，通过TOPSIS算法进行评分。"]
+            "remark": ["经济效益得分以静态投资回收进度扣减设备折旧进度为基础，通过划定最优、最劣参考基准并计算相对距离的方式量化评分。"]
         })
 
         return bar_chart_data
@@ -3293,7 +3337,7 @@ def runkeyStationInternalCompetition():
             "yAxisName": "",
             "markLineName": "平均值",
             "xAxis": str(avg_dict[source_name]["设备质量得分"]),
-            "remark": ["设备质量得分利用均权法为一次成功率、设备可用率、电量损耗三个指标赋权，再通过TOPSISI算法进行评分。"]
+            "remark": ["设备质量得分对一次成功率、设备可用率、电量损耗三个指标采用均权法赋权，再通过划定最优、最劣参考基准并计算相对距离的方式量化评分。"]
         })
 
         # 一次成功率
@@ -3309,7 +3353,7 @@ def runkeyStationInternalCompetition():
             "yAxisName": "%",
             "markLineName": "平均值",
             "xAxis": str(avg_dict[source_name]["一次成功率"]),
-            "remark": ["设备质量得分利用均权法为一次成功率、设备可用率、电量损耗三个指标赋权，再通过TOPSISI算法进行评分。"]
+            "remark": ["设备质量得分对一次成功率、设备可用率、电量损耗三个指标采用均权法赋权，再通过划定最优、最劣参考基准并计算相对距离的方式量化评分。"]
         })
 
         # 设备可用率
@@ -3325,7 +3369,7 @@ def runkeyStationInternalCompetition():
             "yAxisName": "%",
             "markLineName": "平均值",
             "xAxis": str(avg_dict[source_name]["设备可用率"]),
-            "remark": ["设备质量得分利用均权法为一次成功率、设备可用率、电量损耗三个指标赋权，再通过TOPSISI算法进行评分。"]
+            "remark": ["设备质量得分对一次成功率、设备可用率、电量损耗三个指标采用均权法赋权，再通过划定最优、最劣参考基准并计算相对距离的方式量化评分。"]
         })
 
         # 电量损耗
@@ -3341,7 +3385,7 @@ def runkeyStationInternalCompetition():
             "yAxisName": "%",
             "markLineName": "平均值",
             "xAxis": str(avg_dict[source_name]["电量损耗"]),
-            "remark": ["设备质量得分利用均权法为一次成功率、设备可用率、电量损耗三个指标赋权，再通过TOPSISI算法进行评分。"]
+            "remark": ["设备质量得分对一次成功率、设备可用率、电量损耗三个指标采用均权法赋权，再通过划定最优、最劣参考基准并计算相对距离的方式量化评分。"]
         })
 
         return bar_chart_data
@@ -3621,7 +3665,9 @@ def runkeyStationInternalCompetition():
     DF_time_2 = DF_time_2[['merchant_name', 'station_no', 'station_name', 'station_category', 'charging_time_rate']]
 
     # In[455]:
-
+    # 第一步：将无穷大/无穷小值替换为0
+    DF_time_2['charging_time_rate'] = DF_time_2['charging_time_rate'].replace([np.inf, -np.inf], 0)
+    # 第二步：填充空值为0
     DF_time_2['charging_time_rate'] = DF_time_2['charging_time_rate'].fillna(0)
 
     # In[456]:
@@ -3832,7 +3878,7 @@ def runkeyStationInternalCompetition():
         bar_chart_data = []
         remark = [
             '功率效能比=（功率利用率-功率利用率平均值）/(功率利用率最大值-功率利用率平均值）',
-            '使用效率得分利用均权法为功率利用率、时长利用率、单枪充电量、功率效能比4个指标赋权，再通过TOPSISI算法进行评分。'
+            '使用效率得分对功率利用率、时长利用率、单枪充电量、功率效能比四项指标采用均权法赋权，再通过划定最优、最劣参考基准并计算相对距离的方式量化评分。'
         ]
 
         # 获取当前站点信息

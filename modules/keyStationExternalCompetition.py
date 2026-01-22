@@ -626,7 +626,7 @@ def runkeyStationExternalCompetition():
     # In[284]:
 
 
-    competitorStationCompareDimensions['power_rate'] = competitorStationCompareDimensions['power_rate'] * 100
+    #competitorStationCompareDimensions['power_rate'] = competitorStationCompareDimensions['power_rate'] * 100
 
     # In[285]:
 

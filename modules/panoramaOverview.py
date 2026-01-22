@@ -1191,7 +1191,12 @@ def runpanoramaOverview():
     print('筛选后：', DF_cba_pue.shape)
 
     # In[602]:
-
+    #=====20260122测试功率利用率计算方式不同带来的变化-新增开始1
+    ceshi0122 = DF_cba_pue.groupby(by='cba_month',as_index=False).agg({'plat_data_charging_volume':'sum',
+                                                                       'days':'sum',
+                                                                       'station_capacity':'sum'})
+    ceshi0122['pue'] = ceshi0122['plat_data_charging_volume'] / (ceshi0122['station_capacity'] * DF_cba_pue['days'] * 24)
+    #=====20260122测试功率利用率计算方式不同带来的变化-新增结束1
 
     DF_cba_pue['pue'] = DF_cba_pue['plat_data_charging_volume'] / (DF_cba_pue['station_capacity'] * DF_cba_pue['days'] * 24)
 
@@ -1203,6 +1208,10 @@ def runpanoramaOverview():
     # ### 本月数据
 
     # In[604]:
+    #=====20260122测试功率利用率计算方式不同带来的变化-新增开始2
+    # pue_value_1 = ceshi0122[ceshi0122['cba_month'] == M]['pue'].iloc[0]
+    #pue_value = f"{pue_value_1 * 100:.2f}"
+    # =====20260122测试功率利用率计算方式不同带来的变化-新增结束2（注意确认计算方法后下方两行要取消注释）
 
 
     pue_value_1 = DF_cba_pue[DF_cba_pue['cba_month'] == M]['pue'].mean()

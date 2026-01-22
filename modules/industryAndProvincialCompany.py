@@ -1609,7 +1609,7 @@ def runindustryAndProvincialCompany():
     # In[60]:
 
 
-    # 累计接入充电枪数
+    # 月充电量
     df1 = Basic_Data[
         (Basic_Data['归属单位'] == '产业单位') &
         (Basic_Data['commissioning_year_month'] <= M) &
@@ -1636,7 +1636,7 @@ def runindustryAndProvincialCompany():
     a2 = round(gb1.loc[gb1['month'] == M, 'trans_energy'].values[0], 2)
     a3 = round((a2 - a1) / a1 * 100, 2)
     statisticsData = [{"title": "本月充电量", "value": a2, "unit": "kWh"},
-                      {"title": "累计同比增长", "value": a3, "unit": "%"}]
+                      {"title": "同比增长", "value": a3, "unit": "%"}]
     statisticsData = json.dumps(statisticsData, ensure_ascii=False)
     print('statisticsData：\n', statisticsData)
 
@@ -1653,7 +1653,7 @@ def runindustryAndProvincialCompany():
     print('YxisName：\n', YxisName)
 
     # 生成条形图单位
-    legendName = [["本月充电量"]]
+    legendName = [["月充电量"]]
     print('legendName：\n', legendName)
 
     DF = pd.DataFrame({
@@ -1724,7 +1724,7 @@ def runindustryAndProvincialCompany():
     a2 = round(gb1.loc[gb1['month'] == M, 'trans_energy'].values[0], 2)
     a3 = round((a2 - a1) / a1 * 100, 2)
     statisticsData = [{"title": "本月充电量", "value": a2, "unit": "kWh"},
-                      {"title": "累计同比增长", "value": a3, "unit": "%"}]
+                      {"title": "同比增长", "value": a3, "unit": "%"}]
     statisticsData = json.dumps(statisticsData, ensure_ascii=False)
     print('statisticsData：\n', statisticsData)
 
@@ -1741,7 +1741,7 @@ def runindustryAndProvincialCompany():
     print('YxisName：\n', YxisName)
 
     # 生成条形图单位
-    legendName = [["本月充电量"]]
+    legendName = [["月充电量"]]
     print('legendName：\n', legendName)
 
     DF = pd.DataFrame({
@@ -2951,7 +2951,7 @@ def runindustryAndProvincialCompany():
     a2 = round(gb1.loc[gb1['month'] == M, 'trans_amount'].values[0], 2)
     a3 = round((a2 - a1) / a1 * 100, 2)
     statisticsData = [{"title": "本月充电收入", "value": a2, "unit": "元"},
-                      {"title": "累计同比增长", "value": a3, "unit": "%"}]
+                      {"title": "同比增长", "value": a3, "unit": "%"}]
     statisticsData = json.dumps(statisticsData, ensure_ascii=False)
     print('statisticsData：\n', statisticsData)
 
@@ -2968,7 +2968,7 @@ def runindustryAndProvincialCompany():
     print('YxisName：\n', YxisName)
 
     # 生成条形图单位
-    legendName = [["本月充电收入"]]
+    legendName = [["月充电收入"]]
     print('legendName：\n', legendName)
 
     DF = pd.DataFrame({
@@ -3039,7 +3039,7 @@ def runindustryAndProvincialCompany():
     a2 = round(gb1.loc[gb1['month'] == M, 'trans_amount'].values[0], 2)
     a3 = round((a2 - a1) / a1 * 100, 2)
     statisticsData = [{"title": "本月充电收入", "value": a2, "unit": "元"},
-                      {"title": "累计同比增长", "value": a3, "unit": "%"}]
+                      {"title": "同比增长", "value": a3, "unit": "%"}]
     statisticsData = json.dumps(statisticsData, ensure_ascii=False)
     print('statisticsData：\n', statisticsData)
 
@@ -3056,7 +3056,7 @@ def runindustryAndProvincialCompany():
     print('YxisName：\n', YxisName)
 
     # 生成条形图单位
-    legendName = [["本月充电收入"]]
+    legendName = [["月充电收入"]]
     print('legendName：\n', legendName)
 
     DF = pd.DataFrame({
@@ -3390,14 +3390,14 @@ def runindustryAndProvincialCompany():
 
         # 构建统计数据
         statistics = [
-            {"title": "本月度站点平均充电量为", "value": f"{current_trans:.2f}" if current_trans else "N/A", "unit": "kWh"},
-            {"title": "平台商户接入站点平均水平为", "value": f"{current_avg:.2f}" if current_avg else "N/A", "unit": "kWh"},
-            {"title": "本月度商户（含产业、省公司、社会商户与四川电动）排名", "value": current_rank, "unit": " "}
+            {"title": "本月度此商户月充电量为", "value": f"{current_trans:.2f}" if current_trans else "N/A", "unit": "kWh"},
+            {"title": "本月度平台商户平均水平为", "value": f"{current_avg:.2f}" if current_avg else "N/A", "unit": "kWh"},
+            {"title": "本月度此商户（含产业、省公司、社会商户与四川电动）排名", "value": current_rank, "unit": " "}
         ]
 
         # 构建图表数据字典
         chart_data = {
-            "legendName": ["每月充电量", "平台商户接入站点平均水平", "同比增长率"],
+            "legendName": ["月充电量", "平台商户平均水平", "同比增长率"],
             "axisData": axis_data,
             "chartData": [trans_energy, avg_energy, growth_rates],
             "yAxisLeftName": "kWh",
@@ -3449,14 +3449,14 @@ def runindustryAndProvincialCompany():
 
         # 构建统计数据
         statistics = [
-            {"title": "本月度站点平均充电量为", "value": f"{current_trans:.2f}" if current_trans else "N/A", "unit": "kWh"},
-            {"title": "平台商户接入站点平均水平为", "value": f"{current_avg:.2f}" if current_avg else "N/A", "unit": "kWh"},
-            {"title": "本月度商户（含产业、省公司、社会商户与四川电动）排名", "value": current_rank, "unit": " "}
+            {"title": "本月度此商户月充电量为", "value": f"{current_trans:.2f}" if current_trans else "N/A", "unit": "kWh"},
+            {"title": "本月度平台商户平均水平为", "value": f"{current_avg:.2f}" if current_avg else "N/A", "unit": "kWh"},
+            {"title": "本月度此商户（含产业、省公司、社会商户与四川电动）排名", "value": current_rank, "unit": " "}
         ]
 
         # 构建图表数据字典
         chart_data = {
-            "legendName": ["每月充电量", "平台商户接入站点平均水平", "同比增长率"],
+            "legendName": ["月充电量", "平台商户平均水平", "同比增长率"],
             "axisData": axis_data,
             "chartData": [trans_energy, avg_energy, growth_rates],
             "yAxisLeftName": "kWh",
@@ -3544,14 +3544,14 @@ def runindustryAndProvincialCompany():
 
         # 构建统计数据
         statistics = [
-            {"title": "本月度站点平均充电收入为", "value": f"{current_trans:.2f}" if current_trans else "N/A", "unit": "元"},
-            {"title": "平台商户接入站点平均水平为", "value": f"{current_avg:.2f}" if current_avg else "N/A", "unit": "元"},
-            {"title": "本月度商户（含产业、省公司、社会商户与四川电动）排名", "value": current_rank, "unit": " "}
+            {"title": "本月度此商户月充电收入为", "value": f"{current_trans:.2f}" if current_trans else "N/A", "unit": "元"},
+            {"title": "本月度平台商户平均水平为", "value": f"{current_avg:.2f}" if current_avg else "N/A", "unit": "元"},
+            {"title": "本月度此商户（含产业、省公司、社会商户与四川电动）排名", "value": current_rank, "unit": " "}
         ]
 
         # 构建图表数据字典
         chart_data = {
-            "legendName": ["每月充电收入", "平台商户接入站点平均水平", "同比增长率"],
+            "legendName": ["月充电收入", "平台商户平均水平", "同比增长率"],
             "axisData": axis_data,
             "chartData": [trans_amount, avg_energy, growth_rates],
             "yAxisLeftName": "元",
@@ -3603,14 +3603,14 @@ def runindustryAndProvincialCompany():
 
         # 构建统计数据
         statistics = [
-            {"title": "本月度站点平均充电收入为", "value": f"{current_trans:.2f}" if current_trans else "N/A", "unit": "元"},
-            {"title": "平台商户接入站点平均水平为", "value": f"{current_avg:.2f}" if current_avg else "N/A", "unit": "元"},
-            {"title": "本月度商户（含产业、省公司、社会商户与四川电动）排名", "value": current_rank, "unit": " "}
+            {"title": "本月度此商户月充电收入为", "value": f"{current_trans:.2f}" if current_trans else "N/A", "unit": "元"},
+            {"title": "本月度平台商户平均水平为", "value": f"{current_avg:.2f}" if current_avg else "N/A", "unit": "元"},
+            {"title": "本月度此商户（含产业、省公司、社会商户与四川电动）排名", "value": current_rank, "unit": " "}
         ]
 
         # 构建图表数据字典
         chart_data = {
-            "legendName": ["每月充电收入", "平台商户接入站点平均水平", "同比增长率"],
+            "legendName": ["月充电收入", "平台商户平均水平", "同比增长率"],
             "axisData": axis_data,
             "chartData": [trans_amount, avg_energy, growth_rates],
             "yAxisLeftName": "元",
@@ -3703,14 +3703,14 @@ def runindustryAndProvincialCompany():
 
         # 构建统计数据
         statistics = [
-            {"title": "本月度站点平均单枪日均充电量为", "value": f"{current_trans:.2f}" if current_trans else "N/A", "unit": "kWh"},
-            {"title": "平台商户接入站点平均水平为", "value": f"{current_avg:.2f}" if current_avg else "N/A", "unit": "kWh"},
-            {"title": "本月度商户（含产业、省公司、社会商户与四川电动）排名", "value": current_rank, "unit": " "}
+            {"title": "本月度此商户单枪日均充电量为", "value": f"{current_trans:.2f}" if current_trans else "N/A", "unit": "kWh"},
+            {"title": "本月度平台商户平均水平为", "value": f"{current_avg:.2f}" if current_avg else "N/A", "unit": "kWh"},
+            {"title": "本月度此商户（含产业、省公司、社会商户与四川电动）排名", "value": current_rank, "unit": " "}
         ]
 
         # 构建图表数据字典
         chart_data = {
-            "legendName": ["每月单枪日均充电量", "平台商户接入站点平均水平", "同比增长率"],
+            "legendName": ["单枪日均充电量", "平台商户平均水平", "同比增长率"],
             "axisData": axis_data,
             "chartData": [charge_day_energy, avg_energy, growth_rates],
             "yAxisLeftName": "kWh",
@@ -3762,14 +3762,14 @@ def runindustryAndProvincialCompany():
 
         # 构建统计数据
         statistics = [
-            {"title": "本月度站点平均单枪日均充电量为", "value": f"{current_trans:.2f}" if current_trans else "N/A", "unit": "kWh"},
-            {"title": "平台商户接入站点平均水平为", "value": f"{current_avg:.2f}" if current_avg else "N/A", "unit": "kWh"},
-            {"title": "本月度商户（含产业、省公司、社会商户与四川电动）排名", "value": current_rank, "unit": " "}
+            {"title": "本月度此商户单枪日均充电量为", "value": f"{current_trans:.2f}" if current_trans else "N/A", "unit": "kWh"},
+            {"title": "本月度平台商户平均水平为", "value": f"{current_avg:.2f}" if current_avg else "N/A", "unit": "kWh"},
+            {"title": "本月度此商户（含产业、省公司、社会商户与四川电动）排名", "value": current_rank, "unit": " "}
         ]
 
         # 构建图表数据字典
         chart_data = {
-            "legendName": ["每月单枪日均充电量", "平台商户接入站点平均水平", "同比增长率"],
+            "legendName": ["单枪日均充电量", "平台商户平均水平", "同比增长率"],
             "axisData": axis_data,
             "chartData": [charge_day_energy, avg_energy, growth_rates],
             "yAxisLeftName": "kWh",
@@ -3862,14 +3862,14 @@ def runindustryAndProvincialCompany():
 
         # 构建统计数据
         statistics = [
-            {"title": "本月度站点平均功率利用率为", "value": f"{current_trans:.2f}" if current_trans else "N/A", "unit": "%"},
-            {"title": "平台商户接入站点平均水平为", "value": f"{current_avg:.2f}" if current_avg else "N/A", "unit": "%"},
-            {"title": "本月度商户（含产业、省公司、社会商户与四川电动）排名", "value": current_rank, "unit": " "}
+            {"title": "本月度此商户功率利用率为", "value": f"{current_trans:.2f}" if current_trans else "N/A", "unit": "%"},
+            {"title": "本月度平台商户平均水平为", "value": f"{current_avg:.2f}" if current_avg else "N/A", "unit": "%"},
+            {"title": "本月度此商户（含产业、省公司、社会商户与四川电动）排名", "value": current_rank, "unit": " "}
         ]
 
         # 构建图表数据字典
         chart_data = {
-            "legendName": ["每月功率利用率", "平台商户接入站点平均水平", "同比增长率"],
+            "legendName": ["功率利用率", "平台商户平均水平", "同比增长率"],
             "axisData": axis_data,
             "chartData": [pue, avg_energy, growth_rates],
             "yAxisLeftName": "%",
@@ -3921,14 +3921,14 @@ def runindustryAndProvincialCompany():
 
         # 构建统计数据
         statistics = [
-            {"title": "本月度站点平均功率利用率为", "value": f"{current_trans:.2f}" if current_trans else "N/A", "unit": "%"},
-            {"title": "平台商户接入站点平均水平为", "value": f"{current_avg:.2f}" if current_avg else "N/A", "unit": "%"},
-            {"title": "本月度商户（含产业、省公司、社会商户与四川电动）排名", "value": current_rank, "unit": " "}
+            {"title": "本月度此商户功率利用率为", "value": f"{current_trans:.2f}" if current_trans else "N/A", "unit": "%"},
+            {"title": "本月度平台商户平均水平为", "value": f"{current_avg:.2f}" if current_avg else "N/A", "unit": "%"},
+            {"title": "本月度此商户（含产业、省公司、社会商户与四川电动）排名", "value": current_rank, "unit": " "}
         ]
 
         # 构建图表数据字典
         chart_data = {
-            "legendName": ["每月功率利用率", "平台商户接入站点平均水平", "同比增长率"],
+            "legendName": ["功率利用率", "平台商户平均水平", "同比增长率"],
             "axisData": axis_data,
             "chartData": [pue, avg_energy, growth_rates],
             "yAxisLeftName": "%",

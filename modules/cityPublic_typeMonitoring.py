@@ -868,7 +868,7 @@ def runcityPublic_typeMonitoring():
         ].copy()
     print('筛选后：', DF_cba_pue.shape)
 
-    DF_cba_pue['pue'] = DF_cba_pue['plat_data_charging_volume'] / (DF_cba_pue['station_capacity'] * DF_cba_pue['days'] * 24)
+    DF_cba_pue['pue'] = DF_cba_pue['plat_data_charging_volume'] / (DF_cba_pue['station_capacity'] * DF_cba_pue['days'] * 24) * 100
 
     t1 = str(last_year) + '%'
     t2 = str(year) + '%'
@@ -964,7 +964,6 @@ def runcityPublic_typeMonitoring():
     # In[816]:
 
     public_pue['pue'] = public_pue['pue'].fillna(0)
-    public_pue['pue'] = public_pue['pue'] * 100
     # In[818]:
 
     public_pue['pue'] = public_pue['pue'].round(2)
@@ -1884,7 +1883,7 @@ def runcityPublic_typeMonitoring():
     merged_heavy2['gun_charging_volume_d'] = merged_heavy2['gun_charging_volume'] / merged2['days_in_month']
     # 按月聚合，取平均值
     heavy_avg_charge = (
-        merged2.groupby('month')['gun_charging_volume_d']
+        merged_heavy2.groupby('month')['gun_charging_volume_d']
         .mean()
         .reset_index()
         .rename(columns={'gun_charging_volume_d': 'gun_charging_volume_dd'})
@@ -6665,7 +6664,7 @@ def runcityPublic_typeMonitoring():
     # In[1230]:
 
     result_cba_pue = (
-        DF_cba_pue[DF_cba_pue['station_category'] == '城市公共']
+        DF_cba_pue[(DF_cba_pue['station_category'] == '城市公共') & (DF_cba_pue['cba_month'] == M)]
         .groupby('station_no')['pue']
         .mean()
         .reset_index()
@@ -7290,7 +7289,7 @@ def runcityPublic_typeMonitoring():
             "chargingCable": int(row['total_charge_point_count']),
             "ratedPower": int(float(row['total_station_capacity'])),
             "totalInvestmentCosts": float(f"{float(row['total_investment_amount']):.2f}"),
-            "returnCost": f"{float(row['hbpercentage']):.2f}%",
+            "returnCost": round(float(row['hbpercentage']), 2),
             "chargeAmountPerGun": round(float(row['gun_charging_volume_day']), 2),
             "powerUtilization": f"{float(row['pue']) :.2f}%",
             "successRate": f"{float(row['station_success_rate']):.2f}%",
@@ -7355,6 +7354,7 @@ def runcityPublic_typeMonitoring():
             {
                 "radio": "站点维度",
                 "tableData": station_data,
+                "siteNameFilters":[d["siteName"] for d in station_data],
                 "tableSummary": table_summary
             },
             {
@@ -7484,7 +7484,7 @@ def runcityPublic_typeMonitoring():
     # In[1316]:
 
     zk_result_cba_pue = (
-        DF_cba_pue[DF_cba_pue['station_category'] == '重卡专用']
+        DF_cba_pue[(DF_cba_pue['station_category'] == '重卡专用') & (DF_cba_pue['cba_month'] == M)]
         .groupby('station_no')['pue']
         .mean()
         .reset_index()
@@ -7724,7 +7724,7 @@ def runcityPublic_typeMonitoring():
     # In[1336]:
 
     zk_result_city_cba_pue = (
-        DF_cba_pue[DF_cba_pue['station_category'] == '重卡专用']
+        DF_cba_pue[(DF_cba_pue['station_category'] == '重卡专用') &  (DF_cba_pue['cba_month'] == M)]
         .groupby('city')['pue']
         .mean()
         .reset_index()
@@ -7926,7 +7926,7 @@ def runcityPublic_typeMonitoring():
             "chargingCable": int(row['total_charge_point_count']),
             "ratedPower": int(float(row['total_station_capacity'])),
             "totalInvestmentCosts": float(f"{float(row['total_investment_amount']):.2f}"),
-            "returnCost": f"{float(row['hbpercentage']):.2f}%",
+            "returnCost": round(float(row['hbpercentage']), 2),
             "chargeAmountPerGun": round(float(row['gun_charging_volume_day']), 2),
             "powerUtilization": f"{float(row['pue']) :.2f}%",
             "successRate": f"{float(row['station_success_rate']):.2f}%",
@@ -7992,6 +7992,7 @@ def runcityPublic_typeMonitoring():
             {
                 "radio": "站点维度",
                 "tableData": station_data,
+                "siteNameFilters": [d["siteName"] for d in station_data],
                 "tableSummary": table_summary
             },
             {
@@ -8081,7 +8082,7 @@ def runcityPublic_typeMonitoring():
     )
 
     gs_result_cba_pue = (
-        DF_cba_pue[DF_cba_pue['station_category'] == '高速公共']
+        DF_cba_pue[(DF_cba_pue['station_category'] == '高速公共') & (DF_cba_pue['cba_month'] == M)]
         .groupby('station_no')['pue']
         .mean()
         .reset_index()
@@ -8265,7 +8266,7 @@ def runcityPublic_typeMonitoring():
     gs_result_city_vloumes1 = pd.merge(gs_result_city_earn1, gs_result_city_vloumes, on='city', how='inner')
 
     gs_result_city_cba_pue = (
-        DF_cba_pue[DF_cba_pue['station_category'] == '高速公共']
+        DF_cba_pue[(DF_cba_pue['station_category'] == '高速公共') & (DF_cba_pue['cba_month'] == M)]
         .groupby('city')['pue']
         .mean()
         .reset_index()
@@ -8412,7 +8413,7 @@ def runcityPublic_typeMonitoring():
             "chargingCable": int(row['total_charge_point_count']),
             "ratedPower": int(float(row['total_station_capacity'])),
             "totalInvestmentCosts": float(f"{float(row['total_investment_amount']):.2f}"),
-            "returnCost": f"{float(row['hbpercentage']):.2f}%",
+            "returnCost": round(float(row['hbpercentage']), 2),
             "chargeAmountPerGun": round(float(row['gun_charging_volume_day']), 2),
             "powerUtilization": f"{float(row['pue']):.2f}%",
             "successRate": f"{float(row['station_success_rate']):.2f}%",
@@ -8476,6 +8477,7 @@ def runcityPublic_typeMonitoring():
             {
                 "radio": "站点维度",
                 "tableData": station_data,
+                "siteNameFilters": [d["siteName"] for d in station_data],
                 "tableSummary": table_summary
             },
             {
@@ -8565,7 +8567,7 @@ def runcityPublic_typeMonitoring():
     )
 
     gongjiao_result_cba_pue = (
-        DF_cba_pue[DF_cba_pue['station_category'] == '公交专用']
+        DF_cba_pue[(DF_cba_pue['station_category'] == '公交专用') & (DF_cba_pue['cba_month'] == M)]
         .groupby('station_no')['pue']
         .mean()
         .reset_index()
@@ -8747,7 +8749,7 @@ def runcityPublic_typeMonitoring():
     gongjiao_result_city_vloumes1 = pd.merge(gongjiao_result_city_earn1, gongjiao_result_city_vloumes, on='city', how='inner')
 
     gongjiao_result_city_cba_pue = (
-        DF_cba_pue[DF_cba_pue['station_category'] == '公交专用']
+        DF_cba_pue[(DF_cba_pue['station_category'] == '公交专用') & (DF_cba_pue['cba_month'] == M)]
         .groupby('city')['pue']
         .mean()
         .reset_index()
@@ -8906,7 +8908,7 @@ def runcityPublic_typeMonitoring():
             "chargingCable": int(row['total_charge_point_count']),
             "ratedPower": int(float(row['total_station_capacity'])),
             "totalInvestmentCosts": float(f"{float(row['total_investment_amount']):.2f}"),
-            "returnCost": f"{float(row['hbpercentage']):.2f}%",
+            "returnCost": round(float(row['hbpercentage']), 2),
             "chargeAmountPerGun": round(float(row['gun_charging_volume_day']), 2),
             "powerUtilization": f"{float(row['pue']) :.2f}%",
             "successRate": f"{float(row['station_success_rate']):.2f}%",
@@ -8971,6 +8973,7 @@ def runcityPublic_typeMonitoring():
             {
                 "radio": "站点维度",
                 "tableData": station_data,
+                "siteNameFilters": [d["siteName"] for d in station_data],
                 "tableSummary": table_summary
             },
             {
@@ -9060,7 +9063,7 @@ def runcityPublic_typeMonitoring():
     )
 
     xiaoqu_result_cba_pue = (
-        DF_cba_pue[DF_cba_pue['station_category'] == '小区有序']
+        DF_cba_pue[(DF_cba_pue['station_category'] == '小区有序') & (DF_cba_pue['cba_month'] == M)]
         .groupby('station_no')['pue']
         .mean()
         .reset_index()
@@ -9242,7 +9245,7 @@ def runcityPublic_typeMonitoring():
     xiaoqu_result_city_vloumes1 = pd.merge(xiaoqu_result_city_earn1, xiaoqu_result_city_vloumes, on='city', how='inner')
 
     xiaoqu_result_city_cba_pue = (
-        DF_cba_pue[DF_cba_pue['station_category'] == '小区有序']
+        DF_cba_pue[(DF_cba_pue['station_category'] == '小区有序') & (DF_cba_pue['cba_month'] == M)]
         .groupby('city')['pue']
         .mean()
         .reset_index()
@@ -9390,7 +9393,7 @@ def runcityPublic_typeMonitoring():
             "ratedPower": int(float(row['total_station_capacity'])) if pd.notna(row['total_station_capacity']) else 0,
             "totalInvestmentCosts": float(f"{float(row['total_investment_amount']):.2f}") if pd.notna(
                 row['total_investment_amount']) else 0.00,
-            "returnCost": f"{float(row['hbpercentage']):.2f}%" if pd.notna(row['hbpercentage']) else "0.00%",
+            "returnCost": round(float(row['hbpercentage']), 2) if pd.notna(row['hbpercentage']) else 0.00,
             "chargeAmountPerGun": round(float(row['gun_charging_volume_day']), 2) if pd.notna(
                 row['gun_charging_volume_day']) else 0.00,
             "powerUtilization": f"{float(row['pue']):.2f}%" if pd.notna(row['pue']) else "0.00%",
@@ -9456,6 +9459,7 @@ def runcityPublic_typeMonitoring():
             {
                 "radio": "站点维度",
                 "tableData": station_data,
+                "siteNameFilters": [d["siteName"] for d in station_data],
                 "tableSummary": table_summary
             },
             {
@@ -9545,7 +9549,7 @@ def runcityPublic_typeMonitoring():
     )
 
     qita_result_cba_pue = (
-        DF_cba_pue[DF_cba_pue['station_category'] == '其他专用']
+        DF_cba_pue[(DF_cba_pue['station_category'] == '其他专用') & (DF_cba_pue['cba_month'] == M)]
         .groupby('station_no')['pue']
         .mean()
         .reset_index()
@@ -9727,7 +9731,7 @@ def runcityPublic_typeMonitoring():
     qita_result_city_vloumes1 = pd.merge(qita_result_city_earn1, qita_result_city_vloumes, on='city', how='inner')
 
     qita_result_city_cba_pue = (
-        DF_cba_pue[DF_cba_pue['station_category'] == '其他专用']
+        DF_cba_pue[(DF_cba_pue['station_category'] == '其他专用') & (DF_cba_pue['cba_month'] == M)]
         .groupby('city')['pue']
         .mean()
         .reset_index()
@@ -9872,7 +9876,7 @@ def runcityPublic_typeMonitoring():
             "chargingCable": int(row['total_charge_point_count']),
             "ratedPower": int(float(row['total_station_capacity'])),
             "totalInvestmentCosts": float(f"{float(row['total_investment_amount']):.2f}"),
-            "returnCost": f"{float(row['hbpercentage']):.2f}%",
+            "returnCost": round(float(row['hbpercentage']), 2),
             "chargeAmountPerGun": round(float(row['gun_charging_volume_day']), 2),
             "powerUtilization": f"{float(row['pue']) :.2f}%",
             "successRate": f"{float(row['station_success_rate']):.2f}%",
@@ -9937,6 +9941,7 @@ def runcityPublic_typeMonitoring():
             {
                 "radio": "站点维度",
                 "tableData": station_data,
+                "siteNameFilters": [d["siteName"] for d in station_data],
                 "tableSummary": table_summary
             },
             {
@@ -10448,7 +10453,7 @@ def runcityPublic_typeMonitoring():
             "chargingCable": int(row['total_charge_point_count']),
             "ratedPower": int(float(row['total_station_capacity'])),
             "totalInvestmentCosts": float(f"{float(row['total_investment_amount']):.2f}"),
-            "returnCost": f"{float(row['hbpercentage']):.2f}%",
+            "returnCost": round(float(row['hbpercentage']), 2),
             "chargeAmountPerGun": round(float(row['gun_charging_volume_d']), 2),
             "powerUtilization": f"{float(row['pue']) :.2f}%",
             "successRate": f"{float(row['station_success_rate']):.2f}%",
@@ -10513,6 +10518,7 @@ def runcityPublic_typeMonitoring():
             {
                 "radio": "站点维度",
                 "tableData": station_data,
+                "siteNameFilters": [d["siteName"] for d in station_data],
                 "tableSummary": table_summary
             },
             {
@@ -10752,36 +10758,36 @@ def runcityPublic_typeMonitoring():
         ].copy()
     print('筛选后：', DF_cba_pue.shape)
 
-    DF_cba_pue['pue'] = DF_cba_pue['plat_data_charging_volume'] / (DF_cba_pue['station_capacity'] * DF_cba_pue['days'] * 24)
+    DF_cba_pue['pue'] = DF_cba_pue['plat_data_charging_volume'] / (DF_cba_pue['station_capacity'] * DF_cba_pue['days'] * 24) * 100
 
     # ### 本月数据
     csgg_benyue_gonglvliyonglv = DF_cba_pue[(DF_cba_pue['cba_month'] == M) & (DF_cba_pue['station_category'] == '城市公共')]['pue'].mean()
-    csgg_benyue_gonglvliyonglv = f"{csgg_benyue_gonglvliyonglv * 100:.2f}"
+    csgg_benyue_gonglvliyonglv = f"{csgg_benyue_gonglvliyonglv:.2f}"
     print('城市公共功率利用率本月数据：', csgg_benyue_gonglvliyonglv)
 
     # 2. 高速公共
     gsgg_benyue_gonglvliyonglv = DF_cba_pue[(DF_cba_pue['cba_month'] == M) & (DF_cba_pue['station_category'] == '高速公共')]['pue'].mean()
-    gsgg_benyue_gonglvliyonglv = f"{gsgg_benyue_gonglvliyonglv * 100:.2f}"
+    gsgg_benyue_gonglvliyonglv = f"{gsgg_benyue_gonglvliyonglv:.2f}"
     print('高速公共功率利用率本月数据：', gsgg_benyue_gonglvliyonglv)
 
     # 3. 重卡专用
     zkzy_benyue_gonglvliyonglv = DF_cba_pue[(DF_cba_pue['cba_month'] == M) & (DF_cba_pue['station_category'] == '重卡专用')]['pue'].mean()
-    zkzy_benyue_gonglvliyonglv = f"{zkzy_benyue_gonglvliyonglv * 100:.2f}"
+    zkzy_benyue_gonglvliyonglv = f"{zkzy_benyue_gonglvliyonglv:.2f}"
     print('重卡专用功率利用率本月数据：', zkzy_benyue_gonglvliyonglv)
 
     # 4. 公交专用
     gjzy_benyue_gonglvliyonglv = DF_cba_pue[(DF_cba_pue['cba_month'] == M) & (DF_cba_pue['station_category'] == '公交专用')]['pue'].mean()
-    gjzy_benyue_gonglvliyonglv = f"{gjzy_benyue_gonglvliyonglv * 100:.2f}"
+    gjzy_benyue_gonglvliyonglv = f"{gjzy_benyue_gonglvliyonglv:.2f}"
     print('公交专用功率利用率本月数据：', gjzy_benyue_gonglvliyonglv)
 
     # 5. 小区有序
     xqyx_benyue_gonglvliyonglv = DF_cba_pue[(DF_cba_pue['cba_month'] == M) & (DF_cba_pue['station_category'] == '小区有序')]['pue'].mean()
-    xqyx_benyue_gonglvliyonglv = f"{xqyx_benyue_gonglvliyonglv * 100:.2f}"
+    xqyx_benyue_gonglvliyonglv = f"{xqyx_benyue_gonglvliyonglv:.2f}"
     print('小区有序功率利用率本月数据：', xqyx_benyue_gonglvliyonglv)
 
     # 6. 其他专用
     qtzy_benyue_gonglvliyonglv = DF_cba_pue[(DF_cba_pue['cba_month'] == M) & (DF_cba_pue['station_category'] == '其他专用')]['pue'].mean()
-    qtzy_benyue_gonglvliyonglv = f"{qtzy_benyue_gonglvliyonglv * 100:.2f}"
+    qtzy_benyue_gonglvliyonglv = f"{qtzy_benyue_gonglvliyonglv:.2f}"
     print('其他专用功率利用率本月数据：', qtzy_benyue_gonglvliyonglv)
     # ### 同比增长
 
@@ -10792,7 +10798,7 @@ def runcityPublic_typeMonitoring():
         (DF_cba_pue['cba_month'] <= M) &
         (DF_cba_pue['year'] == str(year))
         ]['pue'].mean()
-    city_public_pue = f"{city_public_this_year * 100:.2f}"
+    city_public_pue = f"{city_public_this_year:.2f}"
     print('城市公共功率利用率本年数据', city_public_pue)
 
     # 2. 高速公共
@@ -10801,7 +10807,7 @@ def runcityPublic_typeMonitoring():
         (DF_cba_pue['cba_month'] <= M) &
         (DF_cba_pue['year'] == str(year))
         ]['pue'].mean()
-    highway_public_pue = f"{highway_public_this_year * 100:.2f}"
+    highway_public_pue = f"{highway_public_this_year:.2f}"
     print('高速公共功率利用率本年数据', highway_public_pue)
 
     # 3. 重卡专用
@@ -10810,7 +10816,7 @@ def runcityPublic_typeMonitoring():
         (DF_cba_pue['cba_month'] <= M) &
         (DF_cba_pue['year'] == str(year))
         ]['pue'].mean()
-    heavy_truck_pue = f"{heavy_truck_this_year * 100:.2f}"
+    heavy_truck_pue = f"{heavy_truck_this_year:.2f}"
     print('重卡专用功率利用率本年数据', heavy_truck_pue)
 
     # 4. 公交专用
@@ -10819,7 +10825,7 @@ def runcityPublic_typeMonitoring():
         (DF_cba_pue['cba_month'] <= M) &
         (DF_cba_pue['year'] == str(year))
         ]['pue'].mean()
-    bus_pue = f"{bus_this_year * 100:.2f}"
+    bus_pue = f"{bus_this_year:.2f}"
     print('公交专用功率利用率本年数据', bus_pue)
 
     # 5. 小区有序
@@ -10828,7 +10834,7 @@ def runcityPublic_typeMonitoring():
         (DF_cba_pue['cba_month'] <= M) &
         (DF_cba_pue['year'] == str(year))
         ]['pue'].mean()
-    residential_pue = f"{residential_this_year * 100:.2f}"
+    residential_pue = f"{residential_this_year:.2f}"
     print('小区有序功率利用率本年数据', residential_pue)
 
     # 6. 其他专用
@@ -10837,10 +10843,10 @@ def runcityPublic_typeMonitoring():
         (DF_cba_pue['cba_month'] <= M) &
         (DF_cba_pue['year'] == str(year))
         ]['pue'].mean()
-    other_special_pue = f"{other_special_this_year * 100:.2f}"
+    other_special_pue = f"{other_special_this_year:.2f}"
     print('其他专用功率利用率本年数据', other_special_pue)
     pue_this_year_1 = DF_cba_pue[(DF_cba_pue['cba_month'] <= M) & (DF_cba_pue['year'] == str(year))]['pue'].mean()
-    pue_this_year = f"{pue_this_year_1 * 100:.2f}"
+    pue_this_year = f"{pue_this_year_1:.2f}"
     print('功率利用率本年数据', pue_this_year)
 
     t1 = str(last_year) + '%'
@@ -12890,7 +12896,7 @@ def runcityPublic_typeMonitoring():
         {
             "title": "运营情况",
             "content": [
-                {"name": "本月单枪日均充电量", "value": 48.22, "unit": 'kWh'},
+                {"name": "本月单枪日均充电量", "value": float(csss_dqrjcdl_bysj), "unit": 'kWh'},
                 {"name": "本月功率利用率均值为", "value": f"{float(csgg_benyue_gonglvliyonglv):.2f}", "unit": '%'}  # value 是字符串类型
             ],
             "trend": t1
@@ -13345,7 +13351,7 @@ def runcityPublic_typeMonitoring():
         {
             "title": "运营情况",
             "content": [
-                {"name": "本月单枪日均充电量", "value": 93.1, "unit": 'kWh'},
+                {"name": "本月单枪日均充电量", "value": float(gscs_dqrjcdl_bysj), "unit": 'kWh'},
                 {"name": "本月功率利用率均值为", "value": f"{float(gsgg_benyue_gonglvliyonglv) :.2f}", "unit": '%'}  # value 是字符串类型
             ],
             "trend": e1
