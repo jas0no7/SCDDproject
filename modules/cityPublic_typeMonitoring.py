@@ -1,8 +1,6 @@
-import time
-
 from logs.log_decorator import log_execution
 from loguru import logger
-from modules.config import SQL, import_data_with_cursor, Statistical_Time
+from SCDDproject.modules.config import SQL, import_data_with_cursor, Statistical_Time
 
 
 @log_execution
@@ -10,10 +8,6 @@ def runcityPublic_typeMonitoring():
     logger.info(f"开始执行类型监测-城市公共页面")
     import pandas as pd
     import numpy as np
-    import pymysql
-    from datetime import datetime, date
-    import os
-    from dateutil.parser import parse
     import json
     from pandas.tseries.offsets import MonthBegin
     import calendar
@@ -9984,8 +9978,6 @@ def runcityPublic_typeMonitoring():
     # ### 站点维度
 
     # In[1390]:
-
-    from functools import reduce
 
     # ========== 基础信息 ==========
     result_station_point_v2g = (

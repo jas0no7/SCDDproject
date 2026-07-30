@@ -1,21 +1,13 @@
 from logs.log_decorator import log_execution
 from loguru import logger
-from modules.config import SQL,import_data_with_cursor,Statistical_Time
+from SCDDproject.modules.config import SQL,import_data_with_cursor,Statistical_Time
 
 @log_execution
 def runcompanyWarningOverview():
     logger.info(f"开始执行公司预警概览页面")
 
     import pandas as pd
-    import numpy as np
-    import pymysql
-    from datetime import datetime, date
-    import os
-    from dateutil.parser import parse
     import json
-    from pandas.tseries.offsets import MonthBegin
-    import calendar
-    from dateutil.relativedelta import relativedelta
     from itertools import product
     M, previous_month_str, year, last_year, last_year_month_str, P_M = Statistical_Time()
     P_M = P_M[:4] + '-' + P_M[4:]
@@ -815,6 +807,57 @@ def runcompanyWarningOverview():
         table_comment=table_comment,
         column_comments=column_comments
     )
+    
+    #新增：站点维度投资回本详情总表导出功能
+    # ### r14-合并三张表为一张总表（含标签）
+    r1_merged = r1.copy()
+    r1_merged['payback_status'] = '已回本'
+
+    r2_merged = r2.copy()
+    r2_merged['payback_status'] = '正常待回本'
+
+    r3_merged = r3.copy()
+    r3_merged['payback_status'] = '滞后未回本'
+
+    # 纵向合并
+    r_all = pd.concat([r1_merged, r2_merged, r3_merged], ignore_index=True)
+
+    # 添加分析年月
+    r_all['analysis_month'] = M
+
+    # 重命名列名
+    r_all.columns = ['station_no', 'station_name', 'region',
+                     'station_type', 'investment', 'total_cost',
+                     'total_revenue', 'payback_progress',
+                     'annual_payback_progress', 'depreciation_progress',
+                     'payback_lag_rate', 'payback_status', 'analysis_month']
+
+    # 存储
+    import_data_with_cursor(
+        df=r_all,
+        table_name="dp_CompanyAlert_SiteRecovery_Raw_All",
+        table_comment="公司预警_预警概览页_站点回本进度详情总表（含标签）",
+        column_comments={
+            'station_no': '站点编号',
+            'station_name': '站点名称',
+            'region': '所属区域',
+            'station_type': '站点类型',
+            'investment': '总投资（万元）',
+            'total_cost': '总成本（万元）',
+            'total_revenue': '总收入（万元）',
+            'payback_progress': '静态投资回本进度（%）',
+            'annual_payback_progress': '今年静态投资回本进度（%）',
+            'depreciation_progress': '设备折旧进度（%）',
+            'payback_lag_rate': '回本滞后率（%）',
+            'payback_status': '回本状态（已回本/正常待回本/滞后未回本）',
+            'analysis_month': '分析年月'
+        }
+    )
+
+
+    
+    
+    
 
     # ## 顶部三类站点占比数
 

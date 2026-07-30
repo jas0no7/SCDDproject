@@ -1,6 +1,6 @@
 from logs.log_decorator import log_execution
 from loguru import logger
-from modules.config import SQL,import_data_with_cursor,Statistical_Time
+from SCDDproject.modules.config import SQL,import_data_with_cursor,Statistical_Time
 
 
 @log_execution
@@ -9,17 +9,7 @@ def runcompanyWarningStations():
 
     import pandas as pd
     import numpy as np
-    import pymysql
-    from pymysql.cursors import DictCursor  # 新建表，定义特殊字段类型
-    from datetime import datetime, date
-    import os
-    from dateutil.parser import parse
     import json
-    from pandas.tseries.offsets import MonthBegin
-    import calendar
-    from dateutil.relativedelta import relativedelta
-    from itertools import product
-    import re
     M, previous_month_str, year, last_year, last_year_month_str, P_M = Statistical_Time()
     P_M = P_M[:4] + '-' + P_M[4:]
     print(M, previous_month_str, year, last_year, last_year_month_str, P_M)

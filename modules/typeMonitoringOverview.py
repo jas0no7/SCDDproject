@@ -1,8 +1,6 @@
-import time
-
 from logs.log_decorator import log_execution
 from loguru import logger
-from modules.config import SQL,import_data_with_cursor,Statistical_Time
+from SCDDproject.modules.config import SQL,import_data_with_cursor,Statistical_Time
 
 @log_execution
 def runtypeMonitoringOverview():
@@ -10,10 +8,7 @@ def runtypeMonitoringOverview():
 
     import pandas as pd
     import numpy as np
-    import pymysql
-    from datetime import datetime,date
-    import os
-    from dateutil.parser import parse
+    from datetime import datetime
     import json
     from pandas.tseries.offsets import MonthBegin
     import calendar

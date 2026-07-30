@@ -1,6 +1,6 @@
 from logs.log_decorator import log_execution
 from loguru import logger
-from modules.config import SQL,import_data_with_cursor,Statistical_Time
+from SCDDproject.modules.config import SQL,import_data_with_cursor,Statistical_Time
 
 
 
@@ -8,17 +8,9 @@ from modules.config import SQL,import_data_with_cursor,Statistical_Time
 def runkeyStationInternalCompetition():
     logger.info(f"开始执行重点站点内部竞争页面")
 
-    import pandas as pd
     import numpy as np
-    import pymysql
-    from datetime import datetime, date
-    import os
-    from dateutil.parser import parse
-    import json
-    from pandas.tseries.offsets import MonthBegin
+    from datetime import datetime
     import calendar
-    from dateutil.relativedelta import relativedelta
-    from sklearn.preprocessing import StandardScaler
     from sklearn.preprocessing import MinMaxScaler
 
     # ## 数据导入数据库
@@ -26,9 +18,6 @@ def runkeyStationInternalCompetition():
     # In[229]:
 
     import pandas as pd
-    import json
-    import re
-    import pymysql  # 确保导入pymysql
     M, previous_month_str, year, last_year, last_year_month_str, P_M = Statistical_Time()
     P_M = P_M[:4] + '-' + P_M[4:]
     print(M, previous_month_str, year, last_year, last_year_month_str, P_M)
@@ -807,9 +796,6 @@ def runkeyStationInternalCompetition():
 
     # In[288]:
 
-    import pymysql
-    from pymysql.cursors import DictCursor
-
     def create_table():
         # 数据库连接配置
         conn = pymysql.connect(
@@ -1557,9 +1543,6 @@ def runkeyStationInternalCompetition():
 
     # In[313]:
 
-    import pymysql
-    from pymysql.cursors import DictCursor
-
     def create_table():
         # 数据库连接配置
         conn = pymysql.connect(
@@ -2191,9 +2174,6 @@ def runkeyStationInternalCompetition():
 
     # In[338]:
 
-    import pymysql
-    from pymysql.cursors import DictCursor
-
     def create_table():
         # 数据库连接配置
         conn = pymysql.connect(
@@ -2598,9 +2578,6 @@ def runkeyStationInternalCompetition():
 
     # In[384]:
 
-    import pymysql
-    from pymysql.cursors import DictCursor
-
     def create_table():
         # 数据库连接配置
         conn = pymysql.connect(
@@ -2936,9 +2913,6 @@ def runkeyStationInternalCompetition():
     # #### 数据存储
 
     # In[395]:
-
-    import pymysql
-    from pymysql.cursors import DictCursor
 
     def create_table():
         # 数据库连接配置
@@ -3457,9 +3431,6 @@ def runkeyStationInternalCompetition():
     # #### 数据存储
 
     # In[434]:
-
-    import pymysql
-    from pymysql.cursors import DictCursor
 
     def create_table():
         # 数据库连接配置
@@ -4042,9 +4013,6 @@ def runkeyStationInternalCompetition():
 
     # In[469]:
 
-    import pymysql
-    from pymysql.cursors import DictCursor
-
     def create_table():
         # 数据库连接配置
         conn = pymysql.connect(
@@ -4488,9 +4456,6 @@ def runkeyStationInternalCompetition():
 
     # In[477]:
 
-    import pymysql
-    from pymysql.cursors import DictCursor
-
     def create_table():
         # 数据库连接配置
         conn = pymysql.connect(
@@ -4802,7 +4767,6 @@ def runkeyStationInternalCompetition():
     # In[490]:
 
     import pymysql
-    from pymysql.cursors import DictCursor
 
     def create_table():
         # 数据库连接配置

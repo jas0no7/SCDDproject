@@ -1,6 +1,6 @@
 from logs.log_decorator import log_execution
 from loguru import logger
-from modules.config import SQL,import_data_with_cursor,Statistical_Time
+from SCDDproject.modules.config import SQL,import_data_with_cursor,Statistical_Time
 
 
 
@@ -9,17 +9,9 @@ def runkeyStationExternalCompetition():
     logger.info("开始执行重点站点外部竞争页面")
     import pandas as pd
     import numpy as np
-    import pymysql
-    from datetime import datetime ,date
-    import os
-    from dateutil.parser import parse
     import json
     from pandas.tseries.offsets import MonthBegin
     import calendar
-    from dateutil.relativedelta import relativedelta
-    from sklearn.preprocessing import StandardScaler
-    from sklearn.preprocessing import MinMaxScaler
-    from functools import reduce
     M, previous_month_str, year, last_year, last_year_month_str, P_M = Statistical_Time()
     P_M = P_M[:4] + '-' + P_M[4:]
     print(M, previous_month_str, year, last_year, last_year_month_str, P_M)
@@ -1248,11 +1240,6 @@ def runkeyStationExternalCompetition():
     competitive_portrait
 
     # In[323]:
-
-
-    import math
-
-    import math
 
     radar_columns = ['fee_total', 'charging_quantity_per_gun', 'power_rate']
     radar_names = ['充电价格', '单枪日均充电量', '功率利用率']

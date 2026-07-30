@@ -1,5 +1,5 @@
 
-from modules.config import SQL,import_data_with_cursor,Statistical_Time
+from SCDDproject.modules.config import SQL,import_data_with_cursor,Statistical_Time
 
 
 from logs.log_decorator import log_execution
@@ -9,17 +9,11 @@ def runtechUpgradePaybackForecast():
     logger.info("开始执行技改站点回本周期预测页面")
 
     import pandas as pd
-    import numpy as np
-    import pymysql
-    from datetime import datetime, date
-    import os
-    from dateutil.parser import parse
+    from datetime import datetime
     import json
     from pandas.tseries.offsets import MonthBegin
     import calendar
     from dateutil.relativedelta import relativedelta
-    from sklearn.preprocessing import StandardScaler
-    from sklearn.preprocessing import MinMaxScaler
     M, previous_month_str, year, last_year, last_year_month_str, P_M = Statistical_Time()
     P_M = P_M[:4] + '-' + P_M[4:]
     print(M, previous_month_str, year, last_year, last_year_month_str, P_M)

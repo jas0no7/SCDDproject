@@ -1,6 +1,5 @@
 ﻿from logs.log_decorator import log_execution
-from loguru import logger
-from modules.config import SQL,import_data_with_cursor,Statistical_Time
+from SCDDproject.modules.config import SQL,import_data_with_cursor,Statistical_Time
 
 
 
@@ -12,11 +11,7 @@ def runtechUpgradeStation():
     P_M = P_M[:4] + '-' + P_M[4:]
     print(M, previous_month_str, year, last_year, last_year_month_str, P_M)
     import pandas as pd
-    import numpy as np
-    import pymysql
-    from datetime import datetime, date
-    import os
-    from dateutil.parser import parse
+    from datetime import datetime
     import json
     from pandas.tseries.offsets import MonthBegin
     import calendar
