@@ -1,5 +1,5 @@
 
-from SCDDproject.modules.config import SQL,import_data_with_cursor,Statistical_Time
+from modules.config import SQL,import_data_with_cursor,Statistical_Time
 
 
 from logs.log_decorator import log_execution

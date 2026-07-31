@@ -1,6 +1,6 @@
 from logs.log_decorator import log_execution
 from loguru import logger
-from SCDDproject.modules.config import SQL,import_data_with_cursor,Statistical_Time
+from modules.config import SQL,import_data_with_cursor,Statistical_Time
 
 @log_execution
 def runtypeMonitoringOverview():
@@ -99,8 +99,8 @@ def runtypeMonitoringOverview():
     charging_station cs
     LEFT JOIN rec_merchant rm ON cs.property_owner_merhant_id = rm.merchant_id
     where 
-    rm.merchant_name = '国网电动汽车服务（四川）有限公司'
-    and cs.operation_status = '投运'
+    cs.merchant_nature = "电动公司"
+    and cs.operation_status in ('投运','停运')
     """
     DF_SCDD = SQL(sql)
     DF_SCDD = DF_SCDD[DF_SCDD['charge_point_count'].notna()]
@@ -347,7 +347,7 @@ def runtypeMonitoringOverview():
     rec_merchant rm ON rmr.merchant_id = rm.merchant_id
     LEFT JOIN
     scdd_rec_rules sr ON rm.merchant_id = sr.merchant_id
-    where property_owner_merhant_id =119
+    where cs.merchant_nature = "电动公司"
     and  JSON_UNQUOTE(JSON_EXTRACT(sr.profit_detail, '$.parkingFee')) IS NOT NULL 
     """
     DF_RENT = SQL(sql)
@@ -420,8 +420,8 @@ def runtypeMonitoringOverview():
     charging_station cs
     LEFT JOIN rec_merchant rm ON cs.property_owner_merhant_id = rm.merchant_id
     where 
-    rm.merchant_name = '国网电动汽车服务（四川）有限公司'
-    and operation_status = '投运' 
+    cs.merchant_nature = "电动公司"
+    and operation_status in ('投运','停运')
     
     """
     DF_station = SQL(sql)
@@ -458,8 +458,8 @@ def runtypeMonitoringOverview():
     charging_station cs
     LEFT JOIN rec_merchant rm ON cs.property_owner_merhant_id = rm.merchant_id
     where 
-    rm.merchant_name = '国网电动汽车服务（四川）有限公司'
-    and operation_status in ('投运','退运') and  investment_amount is not null) a
+    cs.merchant_nature = "电动公司"
+    and operation_status in ('投运','停运') and  investment_amount is not null) a
     left join 
     (select * from station_cba_org_data where cba_month <= '{M}' ) b
     on a.station_no =b.station_no
@@ -479,7 +479,7 @@ def runtypeMonitoringOverview():
     rec_merchant rm ON rmr.merchant_id = rm.merchant_id
     LEFT JOIN
     scdd_rec_rules sr ON rm.merchant_id = sr.merchant_id
-    where property_owner_merhant_id =119
+    where cs.merchant_nature = "电动公司"
     and  JSON_UNQUOTE(JSON_EXTRACT(sr.profit_detail, '$.parkingFee')) IS NOT NULL 
     
     """
@@ -496,8 +496,8 @@ def runtypeMonitoringOverview():
     charging_station cs
     LEFT JOIN rec_merchant rm ON cs.property_owner_merhant_id = rm.merchant_id
     where 
-    rm.merchant_name = '国网电动汽车服务（四川）有限公司'
-    and cs.operation_status in ('投运','退运')
+    cs.merchant_nature = "电动公司"
+    and cs.operation_status in ('投运','停运')
     ) a
     left join 
     (select * from fin_rec_result_detail where rec_month <%s and   merchant_id != 119 ) b
@@ -572,7 +572,7 @@ def runtypeMonitoringOverview():
       FROM charging_station cs
       LEFT JOIN rec_merchant rm ON cs.property_owner_merhant_id = rm.merchant_id
       WHERE 
-        rm.merchant_name = '国网电动汽车服务（四川）有限公司'
+        cs.merchant_nature = "电动公司"
         AND investment_amount IS NOT NULL
         AND cs.station_name IN (
           '四川省成都市彭州市濛阳镇供电所电动汽车充电站',
@@ -603,7 +603,7 @@ def runtypeMonitoringOverview():
     FROM charging_station cs
     LEFT JOIN rec_merchant rm ON cs.property_owner_merhant_id = rm.merchant_id
     WHERE 
-      rm.merchant_name = '国网电动汽车服务（四川）有限公司'
+      cs.merchant_nature = "电动公司"
       AND cs.station_no IN (
       "300003000100002472",
       "300003000100002473",
@@ -894,8 +894,8 @@ def runtypeMonitoringOverview():
             charging_station cs
             LEFT JOIN rec_merchant rm ON cs.property_owner_merhant_id = rm.merchant_id
             where 
-            rm.merchant_name = '国网电动汽车服务（四川）有限公司'
-            and  cs.operation_status in ('投运','退运')) a
+            cs.merchant_nature = "电动公司"
+            and  cs.operation_status in ('投运','停运')) a
             left join 
             (select * from station_cba_org_data where cba_month like '%s' or  cba_month like '%s' ) b
             on a.station_no =b.station_no
@@ -976,42 +976,30 @@ def runtypeMonitoringOverview():
 
     # In[56]:
 
-    t1 = str(last_year) + '%'
-    t2 = str(year) + '%'
     sql = """
-        SELECT 
-          rm.merchant_name,
-          cs.*,
-          scod.plat_data_charging_volume,
-          scod.cba_month
-        FROM charging_station cs
-        LEFT JOIN rec_merchant rm 
-          ON cs.property_owner_merhant_id = rm.merchant_id
-        INNER JOIN station_cba_org_data scod 
-          ON cs.station_no = scod.station_no
-        WHERE 
-          rm.merchant_name = '国网电动汽车服务（四川）有限公司'
-          AND (scod.cba_month like '%s' or scod.cba_month like '%s')
-          and cs.operation_status in ('投运','退运')
-        """ % (t1, t2)
+        SELECT
+          pue.*,
+          cs.station_category
+        FROM dp_pue_capacity_utilization pue
+        LEFT JOIN charging_station cs
+          ON pue.station_code COLLATE utf8mb4_unicode_ci
+          = cs.station_no COLLATE utf8mb4_unicode_ci
+        WHERE pue.data_category = '四川电动'
+        """
     DF_cba_pue = SQL(sql)
-    DF_cba_pue = DF_cba_pue[DF_cba_pue['station_category'].isin(target_categories)]
-    DF_cba_pue.loc[DF_cba_pue['station_category'] == '高速', 'station_category'] = '高速公共'
-
-    DF_cba_pue['days'] = DF_cba_pue['cba_month'].apply(get_days_in_month)
-
-    DF_cba_pue['year'] = [i[:4] for i in DF_cba_pue['cba_month']]
-
-    DF_cba_pue = DF_cba_pue[
-        (DF_cba_pue['station_capacity'].notna()) &  # 剔除功率为空的异常值
-        (DF_cba_pue['station_capacity'] > 0) &  # 剔除功率为0的异常值
-        (DF_cba_pue['plat_data_charging_volume'].notna()) &  # 剔除为空的异常值
-        (DF_cba_pue['plat_data_charging_volume'] != 0)  # 剔除平台电量为0的异常值
-        ].copy()
-    print('筛选后：', DF_cba_pue.shape)
-
-    DF_cba_pue['pue'] = DF_cba_pue['plat_data_charging_volume'] / (
-                DF_cba_pue['station_capacity'] * DF_cba_pue['days'] * 24)
+    # 新表的容量利用率即功率利用率，仅保留旧列名以兼容后续图表结构。
+    DF_cba_pue['cba_month'] = (
+        DF_cba_pue['month'].astype(str).str.strip().str.replace(r'\.0$', '', regex=True)
+    )
+    DF_cba_pue['pue'] = pd.to_numeric(
+        DF_cba_pue['capacity_utilization_rate'], errors='coerce'
+    )
+    DF_cba_pue['station_category'] = DF_cba_pue['station_category'].replace({'高速': '高速公共'})
+    DF_cba_pue = DF_cba_pue[DF_cba_pue['pue'].notna()].copy()
+    DF_cba_pue_by_type = DF_cba_pue[
+        DF_cba_pue['station_category'].isin(target_categories)
+    ].copy()
+    print('功率利用率新表筛选后：', DF_cba_pue.shape)
 
 
 
@@ -1024,28 +1012,7 @@ def runtypeMonitoringOverview():
     # In[57]:
 
 
-    # 确保字段为数值型
-    DF_cba_pue['station_capacity'] = pd.to_numeric(DF_cba_pue['station_capacity'], errors='coerce')
-    DF_cba_pue['plat_data_charging_volume'] = pd.to_numeric(DF_cba_pue['plat_data_charging_volume'], errors='coerce')
-
-
-    # In[58]:
-
-
-    # 获取每月天数
-    DF_cba_pue['days_in_month'] = DF_cba_pue['cba_month'].apply(get_days_in_month)
-
-
-    # In[59]:
-
-
-
-
-    # In[60]:
-
-
-    DF_cba_pue_CUR = DF_cba_pue[DF_cba_pue['cba_month'] == M]
-    DF_cba_pue_CUR.loc[DF_cba_pue_CUR['station_category'] == '高速', 'station_category'] = '高速公共'
+    DF_cba_pue_CUR = DF_cba_pue_by_type[DF_cba_pue_by_type['cba_month'] == M].copy()
 
 
     # In[61]:
@@ -1137,7 +1104,7 @@ def runtypeMonitoringOverview():
       dp_success_rate dsr
     INNER JOIN charging_station cs
       ON dsr.station_code = cs.station_no
-    WHERE cs.property_owner_merhant_id = 119
+    WHERE cs.merchant_nature = "电动公司"
     GROUP BY
       cs.station_category,
       dsr.stat_time
@@ -1376,8 +1343,8 @@ def runtypeMonitoringOverview():
     charging_station cs
     LEFT JOIN rec_merchant rm ON cs.property_owner_merhant_id = rm.merchant_id
     where 
-    rm.merchant_name = '国网电动汽车服务（四川）有限公司'
-    and cs.operation_status in ('投运','退运')
+    cs.merchant_nature = "电动公司"
+    and cs.operation_status in ('投运','停运')
     ) a
     left join 
     (select * from station_cba_org_data where cba_month like '%s' or  cba_month like '%s' ) b
@@ -1437,7 +1404,7 @@ def runtypeMonitoringOverview():
                rec_merchant rm ON rmr.merchant_id = rm.merchant_id \
                    LEFT JOIN \
                scdd_rec_rules sr ON rm.merchant_id = sr.merchant_id
-          where property_owner_merhant_id = 119
+          where cs.merchant_nature = "电动公司"
             and JSON_UNQUOTE(JSON_EXTRACT(sr.profit_detail, '$.parkingFee')) IS NOT NULL \
  \
           """
@@ -1452,8 +1419,8 @@ def runtypeMonitoringOverview():
     charging_station cs
     LEFT JOIN rec_merchant rm ON cs.property_owner_merhant_id = rm.merchant_id
     where 
-    rm.merchant_name = '国网电动汽车服务（四川）有限公司'
-    and cs.operation_status in ('投运','退运')
+    cs.merchant_nature = "电动公司"
+    and cs.operation_status in ('投运','停运')
     ) a
     left join 
     (select * from fin_rec_result_detail where (rec_month like '%s' or  rec_month like '%s') and  merchant_id != 119 ) b
@@ -2136,7 +2103,7 @@ def runtypeMonitoringOverview():
     charging_station cs
     LEFT JOIN rec_merchant rm ON cs.property_owner_merhant_id = rm.merchant_id
     where 
-    rm.merchant_name = '国网电动汽车服务（四川）有限公司'
+    cs.merchant_nature = "电动公司"
     and operation_status ='投运' ) a
     left join 
     (select * from station_cba_org_data  ) b
@@ -2465,7 +2432,7 @@ def runtypeMonitoringOverview():
 
     month_list = Data['month'].astype(str).tolist()
     # 2. 筛选指定月份数据
-    DF_cba_pue_chart = DF_cba_pue[DF_cba_pue['cba_month'].isin(month_list)]
+    DF_cba_pue_chart = DF_cba_pue_by_type[DF_cba_pue_by_type['cba_month'].isin(month_list)]
 
 
     # In[173]:
@@ -3088,7 +3055,7 @@ def runtypeMonitoringOverview():
     # charging_station cs
     # LEFT JOIN rec_merchant rm ON cs.property_owner_merhant_id = rm.merchant_id
     # where
-    # rm.merchant_name = '国网电动汽车服务（四川）有限公司'
+    # cs.merchant_nature = "电动公司"
     # and operation_status ='投运'
 
     # """
@@ -3117,7 +3084,7 @@ def runtypeMonitoringOverview():
     # charging_station cs
     # LEFT JOIN rec_merchant rm ON cs.property_owner_merhant_id = rm.merchant_id
     # where
-    # rm.merchant_name = '国网电动汽车服务（四川）有限公司'
+    # cs.merchant_nature = "电动公司"
     # and operation_status ='投运' and  investment_amount is not null) a
     # left join
     # (select * from station_cba_org_data  ) b
@@ -3155,8 +3122,8 @@ def runtypeMonitoringOverview():
     # charging_station cs
     # LEFT JOIN rec_merchant rm ON cs.property_owner_merhant_id = rm.merchant_id
     # where
-    # rm.merchant_name = '国网电动汽车服务（四川）有限公司'
-    # and cs.operation_status in ('投运','退运')
+    # cs.merchant_nature = "电动公司"
+    # and cs.operation_status in ('投运','停运')
     # ) a
     # left join
     # (select * from fin_rec_result_detail where rec_month <%s and   merchant_id != 119 ) b
@@ -3223,7 +3190,7 @@ def runtypeMonitoringOverview():
     #   FROM charging_station cs
     #   LEFT JOIN rec_merchant rm ON cs.property_owner_merhant_id = rm.merchant_id
     #   WHERE
-    #     rm.merchant_name = '国网电动汽车服务（四川）有限公司'
+    #     cs.merchant_nature = "电动公司"
     #     AND investment_amount IS NOT NULL
     #     AND cs.station_name IN (
     #       '四川省成都市彭州市濛阳镇供电所电动汽车充电站',
@@ -3254,7 +3221,7 @@ def runtypeMonitoringOverview():
     # FROM charging_station cs
     # LEFT JOIN rec_merchant rm ON cs.property_owner_merhant_id = rm.merchant_id
     # WHERE
-    #   rm.merchant_name = '国网电动汽车服务（四川）有限公司'
+    #   cs.merchant_nature = "电动公司"
     #   AND cs.station_name IN (
     #   "300003000100002472",
     #   "300003000100002473",
@@ -3627,8 +3594,8 @@ def runtypeMonitoringOverview():
             charging_station cs
             LEFT JOIN rec_merchant rm ON cs.property_owner_merhant_id = rm.merchant_id
             where 
-            rm.merchant_name = '国网电动汽车服务（四川）有限公司'
-            and  cs.operation_status in ('投运','退运')) a
+            cs.merchant_nature = "电动公司"
+            and  cs.operation_status in ('投运','停运')) a
             left join 
             (select * from station_cba_org_data where cba_month like '%s' or  cba_month like '%s' ) b
             on a.station_no =b.station_no
@@ -3652,41 +3619,6 @@ def runtypeMonitoringOverview():
     d1_1['gun_charging_volume_d'] = d1_1['gun_charging_volume'] / get_days_in_month(M)
     dqrjcdl_bysj = d1_1['gun_charging_volume_d'].mean()
     print('单枪日均充电量本月数据：', dqrjcdl_bysj)
-    t1 = str(last_year) + '%'
-    t2 = str(year) + '%'
-    sql = """
-        SELECT 
-          rm.merchant_name,
-          cs.*,
-          scod.plat_data_charging_volume,
-          scod.cba_month
-        FROM charging_station cs
-        LEFT JOIN rec_merchant rm 
-          ON cs.property_owner_merhant_id = rm.merchant_id
-        INNER JOIN station_cba_org_data scod 
-          ON cs.station_no = scod.station_no
-        WHERE 
-          rm.merchant_name = '国网电动汽车服务（四川）有限公司'
-          AND (scod.cba_month like '%s' or scod.cba_month like '%s')
-          and cs.operation_status in ('投运','退运')
-        """ % (t1, t2)
-    DF_cba_pue = SQL(sql)
-
-    DF_cba_pue['days'] = DF_cba_pue['cba_month'].apply(get_days_in_month)
-
-    DF_cba_pue['year'] = [i[:4] for i in DF_cba_pue['cba_month']]
-
-    DF_cba_pue = DF_cba_pue[
-        (DF_cba_pue['station_capacity'].notna()) &  # 剔除功率为空的异常值
-        (DF_cba_pue['station_capacity'] > 0) &  # 剔除功率为0的异常值
-        (DF_cba_pue['plat_data_charging_volume'].notna()) &  # 剔除为空的异常值
-        (DF_cba_pue['plat_data_charging_volume'] != 0)  # 剔除平台电量为0的异常值
-        ].copy()
-    print('筛选后：', DF_cba_pue.shape)
-
-    DF_cba_pue['pue'] = DF_cba_pue['plat_data_charging_volume'] / (
-                DF_cba_pue['station_capacity'] * DF_cba_pue['days'] * 24)
-
     # ### 本月数据
 
     pue_value_1 = DF_cba_pue[DF_cba_pue['cba_month'] == M]['pue'].mean()
@@ -3705,8 +3637,8 @@ def runtypeMonitoringOverview():
     charging_station cs
     LEFT JOIN rec_merchant rm ON cs.property_owner_merhant_id = rm.merchant_id
     where 
-    rm.merchant_name = '国网电动汽车服务（四川）有限公司'
-    and cs.operation_status in ('投运','退运')
+    cs.merchant_nature = "电动公司"
+    and cs.operation_status in ('投运','停运')
     ) a
     left join 
     (select * from station_cba_org_data where cba_month like '%s' or  cba_month like '%s' ) b
@@ -3764,7 +3696,7 @@ def runtypeMonitoringOverview():
                rec_merchant rm ON rmr.merchant_id = rm.merchant_id \
                    LEFT JOIN \
                scdd_rec_rules sr ON rm.merchant_id = sr.merchant_id
-          where property_owner_merhant_id = 119
+          where cs.merchant_nature = "电动公司"
             and JSON_UNQUOTE(JSON_EXTRACT(sr.profit_detail, '$.parkingFee')) IS NOT NULL \
  \
           """
@@ -3779,8 +3711,8 @@ def runtypeMonitoringOverview():
     charging_station cs
     LEFT JOIN rec_merchant rm ON cs.property_owner_merhant_id = rm.merchant_id
     where 
-    rm.merchant_name = '国网电动汽车服务（四川）有限公司'
-    and cs.operation_status in ('投运','退运')
+    cs.merchant_nature = "电动公司"
+    and cs.operation_status in ('投运','停运')
     ) a
     left join 
     (select * from fin_rec_result_detail where (rec_month like '%s' or  rec_month like '%s') and  merchant_id != 119 ) b
