@@ -38,6 +38,33 @@ def runcityPublic_typeMonitoring():
 
     previous_month_str = f"{previous_year:04d}{previous_month:02d}"
 
+    report_month_start = pd.to_datetime(M, format='%Y%m')
+    report_next_month_start = report_month_start + pd.offsets.MonthBegin(1)
+    report_month_end = report_next_month_start - pd.Timedelta(nanoseconds=1)
+    report_next_month_start_sql = report_next_month_start.strftime('%Y-%m-%d')
+
+    def limit_stations_to_report_month(dataframe, date_column='commissioning_time'):
+        """仅保留在报告月结束前已投运的站点。"""
+        result = dataframe.copy()
+        result[date_column] = pd.to_datetime(result[date_column], errors='coerce')
+        return result[
+            result[date_column].notna()
+            & (result[date_column] < report_next_month_start)
+        ].copy()
+
+    def limit_month_data_to_report_month(dataframe, month_column):
+        """统一截断月度指标，避免本年累计读取报告月之后的数据。"""
+        if month_column not in dataframe.columns:
+            return dataframe
+        result = dataframe.copy()
+        month_keys = (
+            result[month_column]
+            .astype(str)
+            .str.replace(r'[^0-9]', '', regex=True)
+            .str[:6]
+        )
+        return result[month_keys <= M].copy()
+
     def get_days_in_month(year_month):
         """
         根据年月字符串获取当月的天数。
@@ -108,7 +135,7 @@ def runcityPublic_typeMonitoring():
     rec_merchant rm ON rmr.merchant_id = rm.merchant_id
     LEFT JOIN
     scdd_rec_rules sr ON rm.merchant_id = sr.merchant_id
-    where property_owner_merhant_id =119
+    where merchant_nature = '电动公司'
     and  JSON_UNQUOTE(JSON_EXTRACT(sr.profit_detail, '$.parkingFee')) IS NOT NULL 
     """
     DF_RENT = SQL(sql)
@@ -128,14 +155,14 @@ def runcityPublic_typeMonitoring():
     charging_station cs
     LEFT JOIN rec_merchant rm ON cs.property_owner_merhant_id = rm.merchant_id
     where 
-    rm.merchant_name = '国网电动汽车服务（四川）有限公司'
-    and cs.operation_status in ('投运','退运')
+    cs.merchant_nature = '电动公司'
+    and cs.operation_status in ('投运','停运')
     """
     DF_SCDD = SQL(sql)
 
     # In[743]:
 
-    target_categories = ['城市公共', '高速公共', '重卡专用', '公交专用', '小区有序', '其他专用']
+    target_categories = ['城市公共', '高速公共', '重卡专用', '公交专用', '小区有序', '其他专用','V2G']
     DF_SCDD = DF_SCDD[DF_SCDD['station_category'].isin(target_categories)]
 
     # In[744]:
@@ -149,11 +176,130 @@ def runcityPublic_typeMonitoring():
     DF_SCDD['total_charge_point_count'] = DF_SCDD['dc_charge_point_count'].fillna(0) + DF_SCDD['ac_charge_point_count'].fillna(0)
     DF_SCDD['commissioning_time'] = pd.to_datetime(DF_SCDD['commissioning_time'], errors='coerce')
     DF_SCDD['downtime'] = pd.to_datetime(DF_SCDD['downtime'], errors='coerce')
-    Data['month_dt'] = pd.to_datetime(Data['month'], format='%Y%m')
+    Data['month_dt'] = (
+        pd.to_datetime(Data['month'], format='%Y%m')
+        + pd.offsets.MonthBegin(1)
+        - pd.Timedelta(nanoseconds=1)
+    )
 
     # In[746]:
 
     DF_SCDD = DF_SCDD[DF_SCDD['charge_point_count'].notna()]
+    DF_SCDD = limit_stations_to_report_month(DF_SCDD)
+
+    # 投资相关指标单独包含投运、退运和停运站点，避免影响页面其他指标的站点口径。
+    sql = """
+    SELECT cs.*
+    FROM charging_station cs
+    WHERE cs.merchant_nature = '电动公司'
+      AND cs.operation_status IN ('投运','退运','停运')
+    """
+    DF_SCDD_INVESTMENT = SQL(sql)
+    DF_SCDD_INVESTMENT.loc[
+        DF_SCDD_INVESTMENT['station_category'] == '高速', 'station_category'
+    ] = '高速公共'
+    DF_SCDD_INVESTMENT['commissioning_time'] = pd.to_datetime(
+        DF_SCDD_INVESTMENT['commissioning_time'], errors='coerce'
+    )
+    DF_SCDD_INVESTMENT = limit_stations_to_report_month(DF_SCDD_INVESTMENT)
+    investment_station_categories = DF_SCDD_INVESTMENT[
+        ['station_no', 'station_category']
+    ].drop_duplicates(subset=['station_no'])
+
+    def build_nowpoint_station_base(current_stations, investment_stations):
+        """非投资字段使用投运+停运站点，投资字段额外包含退运站点。"""
+        current = current_stations.copy()
+        current['total_charge_point_count'] = (
+            current['ac_charge_point_count'].fillna(0)
+            + current['dc_charge_point_count'].fillna(0)
+        )
+        current_summary = (
+            current.groupby('station_no')
+            .agg(
+                station_name=('station_name', 'first'),
+                total_charge_point_count=('total_charge_point_count', 'sum'),
+                total_station_capacity=('station_capacity', 'sum')
+            )
+            .reset_index()
+        )
+
+        investment = investment_stations.copy()
+        investment['investment_amount'] = pd.to_numeric(
+            investment['investment_amount'], errors='coerce'
+        ).fillna(0)
+        investment_summary = (
+            investment.groupby('station_no')
+            .agg(
+                investment_station_name=('station_name', 'first'),
+                total_investment_amount=('investment_amount', 'sum')
+            )
+            .reset_index()
+        )
+
+        result = pd.merge(
+            current_summary, investment_summary, on='station_no', how='outer'
+        )
+        result['station_name'] = result['station_name'].fillna(
+            result['investment_station_name']
+        )
+        return result.drop(columns=['investment_station_name'])
+
+    def build_nowpoint_city_base(current_stations, investment_stations):
+        """按地市分别聚合非投资口径和投资口径。"""
+        current = current_stations.copy()
+        current['total_charge_point_count'] = (
+            current['dc_charge_point_count'].fillna(0)
+            + current['ac_charge_point_count'].fillna(0)
+        )
+        current_summary = (
+            current.groupby('city')
+            .agg(
+                total_charge_point_count=('total_charge_point_count', 'sum'),
+                total_station_capacity=('station_capacity', 'sum')
+            )
+            .reset_index()
+        )
+
+        investment = investment_stations.copy()
+        investment['investment_amount'] = pd.to_numeric(
+            investment['investment_amount'], errors='coerce'
+        ).fillna(0)
+        investment_summary = (
+            investment.groupby('city')['investment_amount']
+            .sum()
+            .reset_index(name='total_investment_amount')
+        )
+        return pd.merge(
+            current_summary, investment_summary, on='city', how='outer'
+        )
+
+    def build_nowpoint_city_payback(investment_results, investment_stations):
+        """按投资三状态口径计算地市回本率。"""
+        station_city = investment_stations[
+            ['station_no', 'city']
+        ].drop_duplicates(subset=['station_no'])
+        city_finance = pd.merge(
+            investment_results[['station_no', 'in', 'out']],
+            station_city,
+            on='station_no',
+            how='inner'
+        )
+        city_finance['in'] = pd.to_numeric(
+            city_finance['in'], errors='coerce'
+        ).fillna(0)
+        city_finance['out'] = pd.to_numeric(
+            city_finance['out'], errors='coerce'
+        ).fillna(0)
+        city_payback = (
+            city_finance.groupby('city', as_index=False)[['in', 'out']]
+            .sum()
+        )
+        city_payback['payback'] = np.where(
+            city_payback['out'] == 0,
+            0,
+            city_payback['in'] / city_payback['out']
+        )
+        return city_payback[['city', 'payback']]
 
     sql = """
     SELECT 
@@ -162,10 +308,11 @@ def runcityPublic_typeMonitoring():
     charging_station cs
     LEFT JOIN rec_merchant rm ON cs.property_owner_merhant_id = rm.merchant_id
     where 
-    rm.merchant_name = '国网电动汽车服务（四川）有限公司'
-    and operation_status in ('投运','退运')
+    cs.merchant_nature = '电动公司'
+    and operation_status in ('投运','停运')
     """
     DF_station = SQL(sql)
+    DF_station = limit_stations_to_report_month(DF_station)
 
     sql = f"""
     select station_no,sum(total_subsidy) as total_subsidy from dp_subsidy_NEW
@@ -188,14 +335,17 @@ def runcityPublic_typeMonitoring():
     charging_station cs
     LEFT JOIN rec_merchant rm ON cs.property_owner_merhant_id = rm.merchant_id
     where 
-    rm.merchant_name = '国网电动汽车服务（四川）有限公司'
-    and operation_status in ('投运','退运') ) a
+    cs.merchant_nature = '电动公司'
+    and operation_status in ('投运','停运') ) a
     left join 
     (select * from station_cba_org_data  ) b
     on a.station_no =b.station_no
     GROUP BY b.station_no, b.cba_month
     """
     DF_cost_revenue = SQL(sql)
+    DF_cost_revenue = limit_month_data_to_report_month(
+        DF_cost_revenue, 'cba_month'
+    )
 
     # In[748]:
 
@@ -212,13 +362,16 @@ def runcityPublic_typeMonitoring():
     charging_station cs
     LEFT JOIN rec_merchant rm ON cs.property_owner_merhant_id = rm.merchant_id
     where 
-    rm.merchant_name = '国网电动汽车服务（四川）有限公司'
-    and  cs.operation_status in ('投运','退运')) a
+    cs.merchant_nature = '电动公司'
+    and  cs.operation_status in ('投运','停运')) a
     left join 
     (select * from station_cba_org_data where cba_month like '%s' or  cba_month like '%s' ) b
     on a.station_no =b.station_no
     """ % (t1, t2)
     DF_cba_org_data = SQL(sql)
+    DF_cba_org_data = limit_month_data_to_report_month(
+        DF_cba_org_data, 'cba_month'
+    )
 
     # In[750]:
 
@@ -226,26 +379,32 @@ def runcityPublic_typeMonitoring():
 
     # In[751]:
 
-    # 功率利用率
-    t1 = str(last_year) + '%'
-    t2 = str(year) + '%'
+    # 功率利用率直接使用容量利用率字段，字段值已经是百分数。
     sql = """
-    SELECT 
-      rm.merchant_name,
-      cs.*,
-      scod.plat_data_charging_volume,
-      scod.cba_month
-    FROM charging_station cs
-    LEFT JOIN rec_merchant rm 
-      ON cs.property_owner_merhant_id = rm.merchant_id
-    INNER JOIN station_cba_org_data scod 
-      ON cs.station_no = scod.station_no
-    WHERE 
-      rm.merchant_name = '国网电动汽车服务（四川）有限公司'
-      AND (scod.cba_month like '%s' or scod.cba_month like '%s')
-      and cs.operation_status in ('投运','退运')
-    """ % (t1, t2)
-    DF_cba_pue = SQL(sql)
+        SELECT
+          pue.*,
+          cs.station_category
+        FROM dp_pue_capacity_utilization pue
+        LEFT JOIN charging_station cs
+          ON pue.station_code COLLATE utf8mb4_unicode_ci
+          = cs.station_no COLLATE utf8mb4_unicode_ci
+        WHERE pue.data_category = '四川电动'
+          AND cs.operation_status IN ('投运','停运')
+        """
+    DF_cba_pue = SQL(sql).rename(columns={
+        'station_code': 'station_no',
+        'month': 'cba_month',
+        'capacity_utilization_rate': 'pue'
+    })
+    DF_cba_pue['cba_month'] = DF_cba_pue['cba_month'].astype(str)
+    DF_cba_pue = limit_month_data_to_report_month(DF_cba_pue, 'cba_month')
+    # 保留源字段的缺失值，聚合时由 mean() 自动忽略，避免将 NULL 当作 0% 。
+    DF_cba_pue['pue'] = pd.to_numeric(DF_cba_pue['pue'], errors='coerce')
+    DF_cba_pue['year'] = DF_cba_pue['cba_month'].str[:4]
+
+    def mean_or_zero(series):
+        value = pd.to_numeric(series, errors='coerce').mean()
+        return 0.0 if pd.isna(value) else float(value)
 
     # In[ ]:
 
@@ -270,7 +429,8 @@ def runcityPublic_typeMonitoring():
       dp_success_rate dsr
     INNER JOIN charging_station cs
       ON dsr.station_code = cs.station_no
-      WHERE cs.property_owner_merhant_id = 119
+      WHERE cs.merchant_nature = '电动公司'
+        AND cs.operation_status IN ('投运','停运')
 
     GROUP BY
       cs.station_category,
@@ -278,6 +438,7 @@ def runcityPublic_typeMonitoring():
       dsr.stat_time
     '''
     DF_success = SQL(sql)
+    DF_success = limit_month_data_to_report_month(DF_success, 'stat_time')
 
     # In[753]:
 
@@ -286,13 +447,18 @@ def runcityPublic_typeMonitoring():
     t2 = str(year) + '%'
     sql = """
     select * from 
-    (select station_no,station_category from  charging_station) c
-    right join 
+    (select station_no,station_category from charging_station
+     where merchant_nature = '电动公司'
+       and operation_status in ('投运','停运')) c
+    inner join
     (select time,station_name,station_code,pile_status,normal_duration,operation_duration,city,pile_manufacturer from dp_operation_duration
     where time like '%s' or time like '%s') d 
     on c.station_no = d.station_code
     """ % (t1, t2)
     DF_operation_duration0 = SQL(sql)
+    DF_operation_duration0 = limit_month_data_to_report_month(
+        DF_operation_duration0, 'time'
+    )
 
     # In[754]:
 
@@ -322,6 +488,9 @@ def runcityPublic_typeMonitoring():
         a.stat_time
     '''
     DF_dispatched_workorders = SQL(sql)
+    DF_dispatched_workorders = limit_month_data_to_report_month(
+        DF_dispatched_workorders, 'stat_time'
+    )
 
     # In[756]:
 
@@ -393,7 +562,7 @@ def runcityPublic_typeMonitoring():
 
     df_filtered = DF_SCDD[
         (DF_SCDD['station_category'] == '城市公共') &
-        (DF_SCDD['operation_status'] == '投运')
+        (DF_SCDD['operation_status'].isin(['投运', '停运']))
         ].copy()
 
     # In[764]:
@@ -541,8 +710,14 @@ def runcityPublic_typeMonitoring():
 
     # In[774]:
 
+    df_filtered_investment = DF_SCDD_INVESTMENT[
+        DF_SCDD_INVESTMENT['station_category'] == '城市公共'
+        ].copy()
+
     # 投资金额转为数值
-    df_filtered['investment_amount'] = pd.to_numeric(df_filtered['investment_amount'], errors='coerce').fillna(0)
+    df_filtered_investment['investment_amount'] = pd.to_numeric(
+        df_filtered_investment['investment_amount'], errors='coerce'
+    ).fillna(0)
 
     # In[775]:
 
@@ -556,7 +731,9 @@ def runcityPublic_typeMonitoring():
     # In[777]:
 
     # 确保 commissioning_time 是 datetime 类型
-    df_filtered['commissioning_time'] = pd.to_datetime(df_filtered['commissioning_time'], errors='coerce')
+    df_filtered_investment['commissioning_time'] = pd.to_datetime(
+        df_filtered_investment['commissioning_time'], errors='coerce'
+    )
 
     # 按月份排序，防止乱序
     Data['month'] = sorted(Data['month'])
@@ -568,7 +745,9 @@ def runcityPublic_typeMonitoring():
         month_dt = pd.to_datetime(month_str, format="%Y%m")
 
         # 获取所有在当前 month 及之前投运的站点
-        df_till_month = df_filtered[df_filtered['commissioning_time'] <= month_dt]
+        df_till_month = df_filtered_investment[
+            df_filtered_investment['commissioning_time'] <= month_dt
+        ]
 
         # 计算截止当前月的累计投资金额
         total_investment = df_till_month['investment_amount'].sum()
@@ -598,11 +777,11 @@ def runcityPublic_typeMonitoring():
     # In[780]:
 
     # 提取年份列
-    df_filtered['year'] = df_filtered['commissioning_time'].dt.year
+    df_filtered_investment['year'] = df_filtered_investment['commissioning_time'].dt.year
 
     # 原始按年份分组汇总
     yearly_investment = (
-        df_filtered.groupby('year')['investment_amount']
+        df_filtered_investment.groupby('year')['investment_amount']
         .sum()
         .reset_index()
     )
@@ -833,40 +1012,6 @@ def runcityPublic_typeMonitoring():
     t1 = str(last_year) + '%'
     t2 = str(year) + '%'
     sql = """
-        SELECT 
-          rm.merchant_name,
-          cs.*,
-          scod.plat_data_charging_volume,
-          scod.cba_month
-        FROM charging_station cs
-        LEFT JOIN rec_merchant rm 
-          ON cs.property_owner_merhant_id = rm.merchant_id
-        INNER JOIN station_cba_org_data scod 
-          ON cs.station_no = scod.station_no
-        WHERE 
-          rm.merchant_name = '国网电动汽车服务（四川）有限公司'
-          AND (scod.cba_month like '%s' or scod.cba_month like '%s')
-          and cs.operation_status in ('投运','退运')
-        """ % (t1, t2)
-    DF_cba_pue = SQL(sql)
-
-    DF_cba_pue['days'] = DF_cba_pue['cba_month'].apply(get_days_in_month)
-
-    DF_cba_pue['year'] = [i[:4] for i in DF_cba_pue['cba_month']]
-
-    DF_cba_pue = DF_cba_pue[
-        (DF_cba_pue['station_capacity'].notna()) &  # 剔除功率为空的异常值
-        (DF_cba_pue['station_capacity'] > 0) &  # 剔除功率为0的异常值
-        (DF_cba_pue['plat_data_charging_volume'].notna()) &  # 剔除为空的异常值
-        (DF_cba_pue['plat_data_charging_volume'] != 0)  # 剔除平台电量为0的异常值
-        ].copy()
-    print('筛选后：', DF_cba_pue.shape)
-
-    DF_cba_pue['pue'] = DF_cba_pue['plat_data_charging_volume'] / (DF_cba_pue['station_capacity'] * DF_cba_pue['days'] * 24) * 100
-
-    t1 = str(last_year) + '%'
-    t2 = str(year) + '%'
-    sql = """
             select * from 
             (SELECT 
             cs.*
@@ -874,13 +1019,16 @@ def runcityPublic_typeMonitoring():
             charging_station cs
             LEFT JOIN rec_merchant rm ON cs.property_owner_merhant_id = rm.merchant_id
             where 
-            rm.merchant_name = '国网电动汽车服务（四川）有限公司'
-            and  cs.operation_status in ('投运','退运')) a
+            cs.merchant_nature = '电动公司'
+            and  cs.operation_status in ('投运','停运')) a
             left join 
             (select * from station_cba_org_data where cba_month like '%s' or  cba_month like '%s' ) b
             on a.station_no =b.station_no
             """ % (t1, t2)
     DF_org_data_pre_gun = SQL(sql)
+    DF_org_data_pre_gun = limit_month_data_to_report_month(
+        DF_org_data_pre_gun, 'cba_month'
+    )
 
     DF_org_data_pre_gun = DF_org_data_pre_gun.fillna(0)
     DF_org_data_pre_gun['charge_point_count'] = DF_org_data_pre_gun['dc_charge_point_count'].fillna(0) + DF_org_data_pre_gun[
@@ -927,14 +1075,6 @@ def runcityPublic_typeMonitoring():
     # In[ ]:
 
     # ### 功率利用率
-
-    # In[809]:
-
-    DF_cba_pue['days'] = DF_cba_pue['cba_month'].apply(get_days_in_month)
-
-    # In[810]:
-
-    DF_cba_pue['year'] = [i[:4] for i in DF_cba_pue['cba_month']]
 
     df_filtered3 = DF_cba_pue[DF_cba_pue['station_category'] == '城市公共'].copy()
 
@@ -1046,7 +1186,8 @@ def runcityPublic_typeMonitoring():
           dp_success_rate dsr
         INNER JOIN charging_station cs
           ON dsr.station_code = cs.station_no
-          WHERE cs.property_owner_merhant_id = 119
+          WHERE cs.merchant_nature = '电动公司'
+            AND cs.operation_status IN ('投运','停运')
 
         GROUP BY
           cs.station_category,
@@ -1054,6 +1195,7 @@ def runcityPublic_typeMonitoring():
           dsr.stat_time
         '''
     DF_success = SQL(sql)
+    DF_success = limit_month_data_to_report_month(DF_success, 'stat_time')
     DF_success['month'] = DF_success['stat_time'].astype(str).str.replace('-', '')
     DF_success['month'] = DF_success['month'].astype(str)
 
@@ -1094,13 +1236,18 @@ def runcityPublic_typeMonitoring():
     t2 = str(year) + '%'
     sql = """
         select * from 
-        (select station_no,station_category from  charging_station) c
-        right join 
+        (select station_no,station_category from charging_station
+         where merchant_nature = '电动公司'
+           and operation_status in ('投运','停运')) c
+        inner join
         (select time,station_name,station_code,pile_status,normal_duration,operation_duration,pile_manufacturer,city from dp_operation_duration
         where time like '%s' or time like '%s') d 
         on c.station_no = d.station_code
         """ % (t1, t2)
     DF_operation_duration = SQL(sql)
+    DF_operation_duration = limit_month_data_to_report_month(
+        DF_operation_duration, 'time'
+    )
 
     DF_operation_duration = DF_operation_duration.fillna(0)
 
@@ -1223,14 +1370,17 @@ def runcityPublic_typeMonitoring():
     charging_station cs
     LEFT JOIN rec_merchant rm ON cs.property_owner_merhant_id = rm.merchant_id
     where 
-    rm.merchant_name = '国网电动汽车服务（四川）有限公司'
-    and cs.operation_status in ('投运','退运')
+    cs.merchant_nature = '电动公司'
+    and cs.operation_status in ('投运','停运')
     ) a
     left join 
     (select * from station_cba_org_data where cba_month like '%s' or  cba_month like '%s' ) b
     on a.station_no =b.station_no
     """ % (t1, t2)
     DF_cba_org_data = SQL(sql)
+    DF_cba_org_data = limit_month_data_to_report_month(
+        DF_cba_org_data, 'cba_month'
+    )
     DF_cba_org_data = DF_cba_org_data.fillna(0)
     # 数据类型转换
     DF_cba_org_data['rec_data_elec_fee_revenue'] = DF_cba_org_data['rec_data_elec_fee_revenue'].astype(str).astype(float)
@@ -1260,6 +1410,9 @@ def runcityPublic_typeMonitoring():
     (stat_time like '%s' or stat_time like '%s') and maintenance_cost>0
     """ % (t1, t2)
     DF_maintenance = SQL(sql)
+    DF_maintenance = limit_month_data_to_report_month(
+        DF_maintenance, 'cba_month'
+    )
     # 运维费需要特殊处理，由万元变为元
     DF_maintenance['maintenance_cost'] = DF_maintenance['maintenance_cost'].astype('float') * 10000
     print(DF_maintenance.info())
@@ -1278,7 +1431,7 @@ def runcityPublic_typeMonitoring():
                rec_merchant rm ON rmr.merchant_id = rm.merchant_id \
                    LEFT JOIN \
                scdd_rec_rules sr ON rm.merchant_id = sr.merchant_id
-          where property_owner_merhant_id = 119
+          where merchant_nature = '电动公司'
             and JSON_UNQUOTE(JSON_EXTRACT(sr.profit_detail, '$.parkingFee')) IS NOT NULL \
      \
           """
@@ -1293,14 +1446,17 @@ def runcityPublic_typeMonitoring():
     charging_station cs
     LEFT JOIN rec_merchant rm ON cs.property_owner_merhant_id = rm.merchant_id
     where 
-    rm.merchant_name = '国网电动汽车服务（四川）有限公司'
-    and cs.operation_status in ('投运','退运')
+    cs.merchant_nature = '电动公司'
+    and cs.operation_status in ('投运','停运')
     ) a
     left join 
     (select * from fin_rec_result_detail where (rec_month like '%s' or  rec_month like '%s') and  merchant_id != 119 ) b
     on a.station_no =b.station_no
     """ % (t1, t2)
     fin_rec_result_detail = SQL(sql)
+    fin_rec_result_detail = limit_month_data_to_report_month(
+        fin_rec_result_detail, 'rec_month'
+    )
     fin_rec_result_detail['merchant_profit_amount'] = fin_rec_result_detail['merchant_profit_amount'].astype('float')
     print(fin_rec_result_detail.info())
 
@@ -1546,7 +1702,7 @@ def runcityPublic_typeMonitoring():
 
     df_Heavy = DF_SCDD[
         (DF_SCDD['station_category'] == '重卡专用') &
-        (DF_SCDD['operation_status'] == '投运')
+        (DF_SCDD['operation_status'].isin(['投运', '停运']))
         ].copy()
 
     # In[868]:
@@ -1647,13 +1803,21 @@ def runcityPublic_typeMonitoring():
 
     # In[874]:
 
+    df_Heavy_investment = DF_SCDD_INVESTMENT[
+        DF_SCDD_INVESTMENT['station_category'] == '重卡专用'
+        ].copy()
+
     # 投资金额转为数值
-    df_Heavy['investment_amount'] = pd.to_numeric(df_Heavy['investment_amount'], errors='coerce').fillna(0)
+    df_Heavy_investment['investment_amount'] = pd.to_numeric(
+        df_Heavy_investment['investment_amount'], errors='coerce'
+    ).fillna(0)
 
     # In[875]:
 
     # 确保 commissioning_time 是 datetime 类型
-    df_Heavy['commissioning_time'] = pd.to_datetime(df_Heavy['commissioning_time'], errors='coerce')
+    df_Heavy_investment['commissioning_time'] = pd.to_datetime(
+        df_Heavy_investment['commissioning_time'], errors='coerce'
+    )
 
     # 按月份排序，防止乱序
     Data['month'] = sorted(Data['month'])
@@ -1665,7 +1829,9 @@ def runcityPublic_typeMonitoring():
         month_dt = pd.to_datetime(month_str, format="%Y%m")
 
         # 获取所有在当前 month 及之前投运的站点
-        df_till_month = df_Heavy[df_Heavy['commissioning_time'] <= month_dt]
+        df_till_month = df_Heavy_investment[
+            df_Heavy_investment['commissioning_time'] <= month_dt
+        ]
 
         # 计算截止当前月的累计投资金额
         total_investment = df_till_month['investment_amount'].sum()
@@ -1718,11 +1884,11 @@ def runcityPublic_typeMonitoring():
 
     # In[879]:
 
-    df_Heavy['year'] = df_Heavy['commissioning_time'].dt.year
+    df_Heavy_investment['year'] = df_Heavy_investment['commissioning_time'].dt.year
 
     # 原始按年份分组汇总
     zk_yearly_investment = (
-        df_Heavy.groupby('year')['investment_amount']
+        df_Heavy_investment.groupby('year')['investment_amount']
         .sum()
         .reset_index()
     )
@@ -1896,7 +2062,7 @@ def runcityPublic_typeMonitoring():
 
     # In[894]:
 
-    df_heavy3 = DF_cba_pue[DF_cba_pue['station_category'] == '城市公共'].copy()
+    df_heavy3 = DF_cba_pue[DF_cba_pue['station_category'] == '重卡专用'].copy()
 
     # In[895]:
 
@@ -2304,7 +2470,7 @@ def runcityPublic_typeMonitoring():
     # 筛选城市公共
     df_bus = DF_SCDD[
         (DF_SCDD['station_category'] == '公交专用') &
-        (DF_SCDD['operation_status'] == '投运')
+        (DF_SCDD['operation_status'].isin(['投运', '停运']))
         ].copy()
 
     # In[927]:
@@ -2410,13 +2576,21 @@ def runcityPublic_typeMonitoring():
 
     # In[935]:
 
+    df_bus_investment = DF_SCDD_INVESTMENT[
+        DF_SCDD_INVESTMENT['station_category'] == '公交专用'
+        ].copy()
+
     # 投资金额转为数值
-    df_bus['investment_amount'] = pd.to_numeric(df_bus['investment_amount'], errors='coerce').fillna(0)
+    df_bus_investment['investment_amount'] = pd.to_numeric(
+        df_bus_investment['investment_amount'], errors='coerce'
+    ).fillna(0)
 
     # In[936]:
 
     # 确保 commissioning_time 是 datetime 类型
-    df_bus['commissioning_time'] = pd.to_datetime(df_bus['commissioning_time'], errors='coerce')
+    df_bus_investment['commissioning_time'] = pd.to_datetime(
+        df_bus_investment['commissioning_time'], errors='coerce'
+    )
 
     # 按月份排序，防止乱序
     Data['month'] = sorted(Data['month'])
@@ -2428,7 +2602,9 @@ def runcityPublic_typeMonitoring():
         month_dt = pd.to_datetime(month_str, format="%Y%m")
 
         # 获取所有在当前 month 及之前投运的站点
-        df_till_month = df_bus[df_bus['commissioning_time'] <= month_dt]
+        df_till_month = df_bus_investment[
+            df_bus_investment['commissioning_time'] <= month_dt
+        ]
 
         # 计算截止当前月的累计投资金额
         total_investment = df_till_month['investment_amount'].sum()
@@ -2457,11 +2633,11 @@ def runcityPublic_typeMonitoring():
     # In[938]:
 
     # 提取年份列
-    df_bus['year'] = df_bus['commissioning_time'].dt.year
+    df_bus_investment['year'] = df_bus_investment['commissioning_time'].dt.year
 
     # 原始按年份分组汇总
     bus_yearly_investment = (
-        df_bus.groupby('year')['investment_amount']
+        df_bus_investment.groupby('year')['investment_amount']
         .sum()
         .reset_index()
     )
@@ -3006,7 +3182,7 @@ def runcityPublic_typeMonitoring():
 
     df_filtered_high = DF_SCDD[
         (DF_SCDD['station_category'].isin(['高速公共', '高速'])) &
-        (DF_SCDD['operation_status'] == '投运')
+        (DF_SCDD['operation_status'].isin(['投运', '停运']))
         ].copy()
 
     # In[982]:
@@ -3112,13 +3288,21 @@ def runcityPublic_typeMonitoring():
 
     # In[989]:
 
+    df_filtered_high_investment = DF_SCDD_INVESTMENT[
+        DF_SCDD_INVESTMENT['station_category'] == '高速公共'
+        ].copy()
+
     # 投资金额转为数值
-    df_filtered_high['investment_amount'] = pd.to_numeric(df_filtered_high['investment_amount'], errors='coerce').fillna(0)
+    df_filtered_high_investment['investment_amount'] = pd.to_numeric(
+        df_filtered_high_investment['investment_amount'], errors='coerce'
+    ).fillna(0)
 
     # In[990]:
 
     # 确保 commissioning_time 是 datetime 类型
-    df_filtered_high['commissioning_time'] = pd.to_datetime(df_filtered_high['commissioning_time'], errors='coerce')
+    df_filtered_high_investment['commissioning_time'] = pd.to_datetime(
+        df_filtered_high_investment['commissioning_time'], errors='coerce'
+    )
 
     # 按月份排序，防止乱序
     Data['month'] = sorted(Data['month'])
@@ -3130,7 +3314,9 @@ def runcityPublic_typeMonitoring():
         month_dt = pd.to_datetime(month_str, format="%Y%m")
 
         # 获取所有在当前 month 及之前投运的站点
-        df_till_month = df_filtered_high[df_filtered_high['commissioning_time'] <= month_dt]
+        df_till_month = df_filtered_high_investment[
+            df_filtered_high_investment['commissioning_time'] <= month_dt
+        ]
 
         # 计算截止当前月的累计投资金额
         total_investment = df_till_month['investment_amount'].sum()
@@ -3157,11 +3343,11 @@ def runcityPublic_typeMonitoring():
     # In[992]:
 
     # 提取年份列
-    df_filtered_high['year'] = df_filtered_high['commissioning_time'].dt.year
+    df_filtered_high_investment['year'] = df_filtered_high_investment['commissioning_time'].dt.year
 
     # 原始按年份分组汇总
     high_yearly_investment = (
-        df_filtered_high.groupby('year')['investment_amount']
+        df_filtered_high_investment.groupby('year')['investment_amount']
         .sum()
         .reset_index()
     )
@@ -3727,7 +3913,7 @@ def runcityPublic_typeMonitoring():
 
     df_filtered_com = DF_SCDD[
         (DF_SCDD['station_category'] == '小区有序') &
-        (DF_SCDD['operation_status'] == '投运')
+        (DF_SCDD['operation_status'].isin(['投运', '停运']))
         ].copy()
 
     # In[1037]:
@@ -3834,13 +4020,21 @@ def runcityPublic_typeMonitoring():
 
     # In[1044]:
 
+    df_filtered_com_investment = DF_SCDD_INVESTMENT[
+        DF_SCDD_INVESTMENT['station_category'] == '小区有序'
+        ].copy()
+
     # 投资金额转为数值
-    df_filtered_com['investment_amount'] = pd.to_numeric(df_filtered_com['investment_amount'], errors='coerce').fillna(0)
+    df_filtered_com_investment['investment_amount'] = pd.to_numeric(
+        df_filtered_com_investment['investment_amount'], errors='coerce'
+    ).fillna(0)
 
     # In[1045]:
 
     # 确保 commissioning_time 是 datetime 类型
-    df_filtered_com['commissioning_time'] = pd.to_datetime(df_filtered_com['commissioning_time'], errors='coerce')
+    df_filtered_com_investment['commissioning_time'] = pd.to_datetime(
+        df_filtered_com_investment['commissioning_time'], errors='coerce'
+    )
 
     # 按月份排序，防止乱序
     Data['month'] = sorted(Data['month'])
@@ -3852,7 +4046,9 @@ def runcityPublic_typeMonitoring():
         month_dt = pd.to_datetime(month_str, format="%Y%m")
 
         # 获取所有在当前 month 及之前投运的站点
-        df_till_month = df_filtered_com[df_filtered_com['commissioning_time'] <= month_dt]
+        df_till_month = df_filtered_com_investment[
+            df_filtered_com_investment['commissioning_time'] <= month_dt
+        ]
 
         # 计算截止当前月的累计投资金额
         total_investment = df_till_month['investment_amount'].sum()
@@ -3876,11 +4072,11 @@ def runcityPublic_typeMonitoring():
     # In[1047]:
 
     # 提取年份列
-    df_filtered_com['year'] = df_filtered_com['commissioning_time'].dt.year
+    df_filtered_com_investment['year'] = df_filtered_com_investment['commissioning_time'].dt.year
 
     # 原始按年份分组汇总
     com_yearly_investment = (
-        df_filtered_com.groupby('year')['investment_amount']
+        df_filtered_com_investment.groupby('year')['investment_amount']
         .sum()
         .reset_index()
     )
@@ -3900,7 +4096,7 @@ def runcityPublic_typeMonitoring():
     )
 
     # 保留两位小数（避免 0.0 变成长小数）
-    com_yearly_investment['investment_amount'] = yearly_investment['investment_amount'].round(2)
+    com_yearly_investment['investment_amount'] = com_yearly_investment['investment_amount'].round(2)
 
     com_yearly_investment
 
@@ -4442,7 +4638,7 @@ def runcityPublic_typeMonitoring():
 
     df_filtered_else = DF_SCDD[
         (DF_SCDD['station_category'] == '其他专用') &
-        (DF_SCDD['operation_status'] == '投运')
+        (DF_SCDD['operation_status'].isin(['投运', '停运']))
         ].copy()
 
     # In[1093]:
@@ -4547,13 +4743,21 @@ def runcityPublic_typeMonitoring():
 
     # In[1100]:
 
+    df_filtered_else_investment = DF_SCDD_INVESTMENT[
+        DF_SCDD_INVESTMENT['station_category'] == '其他专用'
+        ].copy()
+
     # 投资金额转为数值
-    df_filtered_else['investment_amount'] = pd.to_numeric(df_filtered_else['investment_amount'], errors='coerce').fillna(0)
+    df_filtered_else_investment['investment_amount'] = pd.to_numeric(
+        df_filtered_else_investment['investment_amount'], errors='coerce'
+    ).fillna(0)
 
     # In[1101]:
 
     # 确保 commissioning_time 是 datetime 类型
-    df_filtered_else['commissioning_time'] = pd.to_datetime(df_filtered_else['commissioning_time'], errors='coerce')
+    df_filtered_else_investment['commissioning_time'] = pd.to_datetime(
+        df_filtered_else_investment['commissioning_time'], errors='coerce'
+    )
 
     # 按月份排序，防止乱序
     Data['month'] = sorted(Data['month'])
@@ -4565,7 +4769,9 @@ def runcityPublic_typeMonitoring():
         month_dt = pd.to_datetime(month_str, format="%Y%m")
 
         # 获取所有在当前 month 及之前投运的站点
-        df_till_month = df_filtered_else[df_filtered_else['commissioning_time'] <= month_dt]
+        df_till_month = df_filtered_else_investment[
+            df_filtered_else_investment['commissioning_time'] <= month_dt
+        ]
 
         # 计算截止当前月的累计投资金额
         total_investment = df_till_month['investment_amount'].sum()
@@ -4592,11 +4798,11 @@ def runcityPublic_typeMonitoring():
     # In[1103]:
 
     # 提取年份列
-    df_filtered_else['year'] = df_filtered_else['commissioning_time'].dt.year
+    df_filtered_else_investment['year'] = df_filtered_else_investment['commissioning_time'].dt.year
 
     # 原始按年份分组汇总
     else_yearly_investment = (
-        df_filtered_else.groupby('year')['investment_amount']
+        df_filtered_else_investment.groupby('year')['investment_amount']
         .sum()
         .reset_index()
     )
@@ -4848,7 +5054,8 @@ def runcityPublic_typeMonitoring():
           dp_success_rate dsr
         INNER JOIN charging_station cs
           ON dsr.station_code = cs.station_no
-          WHERE cs.property_owner_merhant_id = 119
+          WHERE cs.merchant_nature = '电动公司'
+            AND cs.operation_status IN ('投运','停运')
 
         GROUP BY
           cs.station_category,
@@ -4856,6 +5063,7 @@ def runcityPublic_typeMonitoring():
           dsr.stat_time
         '''
     DF_success = SQL(sql)
+    DF_success = limit_month_data_to_report_month(DF_success, 'stat_time')
     DF_success['month'] = DF_success['stat_time'].astype(str).str.replace('-', '')
     DF_success['month'] = DF_success['month'].astype(str)
 
@@ -4896,13 +5104,18 @@ def runcityPublic_typeMonitoring():
     t2 = str(year) + '%'
     sql = """
         select * from 
-        (select station_no,station_category from  charging_station) c
-        right join 
+        (select station_no,station_category from charging_station
+         where merchant_nature = '电动公司'
+           and operation_status in ('投运','停运')) c
+        inner join
         (select time,station_name,station_code,pile_status,normal_duration,operation_duration,city from dp_operation_duration
         where time like '%s' or time like '%s') d 
         on c.station_no = d.station_code
         """ % (t1, t2)
     DF_operation_duration = SQL(sql)
+    DF_operation_duration = limit_month_data_to_report_month(
+        DF_operation_duration, 'time'
+    )
 
     DF_operation_duration = DF_operation_duration.fillna(0)
 
@@ -5252,10 +5465,13 @@ def runcityPublic_typeMonitoring():
 
     sql = """
     SELECT * FROM
-    charging_station
-    WHERE station_name like '%V2G%'
+    charging_station cs
+    WHERE cs.station_name like '%V2G%'
+      AND cs.merchant_nature = '电动公司'
+      AND cs.operation_status IN ('投运','停运')
     """
     df_v2g = SQL(sql)
+    df_v2g = limit_stations_to_report_month(df_v2g)
 
     # In[1145]:
 
@@ -5358,13 +5574,22 @@ def runcityPublic_typeMonitoring():
 
     # In[1153]:
 
+    # V2G 类型仅按站名是否包含 V2G 判断。
+    df_v2g_investment = DF_SCDD_INVESTMENT[
+        DF_SCDD_INVESTMENT['station_name'].str.contains('V2G', case=False, na=False)
+        ].copy()
+
     # 投资金额转为数值
-    df_v2g['investment_amount'] = pd.to_numeric(df_v2g['investment_amount'], errors='coerce').fillna(0)
+    df_v2g_investment['investment_amount'] = pd.to_numeric(
+        df_v2g_investment['investment_amount'], errors='coerce'
+    ).fillna(0)
 
     # In[1154]:
 
     # 确保 commissioning_time 是 datetime 类型
-    df_v2g['commissioning_time'] = pd.to_datetime(df_v2g['commissioning_time'], errors='coerce')
+    df_v2g_investment['commissioning_time'] = pd.to_datetime(
+        df_v2g_investment['commissioning_time'], errors='coerce'
+    )
 
     # 按月份排序，防止乱序
     Data['month'] = sorted(Data['month'])
@@ -5376,7 +5601,9 @@ def runcityPublic_typeMonitoring():
         month_dt = pd.to_datetime(month_str, format="%Y%m")
 
         # 获取所有在当前 month 及之前投运的站点
-        df_till_month = df_v2g[df_v2g['commissioning_time'] <= month_dt]
+        df_till_month = df_v2g_investment[
+            df_v2g_investment['commissioning_time'] <= month_dt
+        ]
 
         # 计算截止当前月的累计投资金额
         total_investment = df_till_month['investment_amount'].sum()
@@ -5396,11 +5623,11 @@ def runcityPublic_typeMonitoring():
     # In[1155]:
 
     # 提取年份列
-    df_v2g['year'] = df_v2g['commissioning_time'].dt.year
+    df_v2g_investment['year'] = df_v2g_investment['commissioning_time'].dt.year
 
     # 原始按年份分组汇总
     v2g_yearly_investment = (
-        df_v2g.groupby('year')['investment_amount']
+        df_v2g_investment.groupby('year')['investment_amount']
         .sum()
         .reset_index()
     )
@@ -5494,6 +5721,8 @@ def runcityPublic_typeMonitoring():
             ON cs.property_owner_merhant_id = rm.merchant_id
         WHERE 
             cs.station_name LIKE '%%V2G%%'
+            AND cs.merchant_nature = '电动公司'
+            AND cs.operation_status IN ('投运','停运')
     ) a
     LEFT JOIN 
     (
@@ -5505,6 +5734,9 @@ def runcityPublic_typeMonitoring():
     """ % (t1, t2)
 
     DF_cba_org_data_v2g = SQL(sql)
+    DF_cba_org_data_v2g = limit_month_data_to_report_month(
+        DF_cba_org_data_v2g, 'cba_month'
+    )
 
     # In[1160]:
 
@@ -5551,60 +5783,16 @@ def runcityPublic_typeMonitoring():
 
     # In[1166]:
 
-    # 功率利用率
-    t1 = str(last_year) + '%'
-    t2 = str(year) + '%'
-    sql = """
-    SELECT 
-      rm.merchant_name,
-      cs.*,
-      scod.plat_data_charging_volume,
-      scod.cba_month
-    FROM charging_station cs
-    LEFT JOIN rec_merchant rm 
-      ON cs.property_owner_merhant_id = rm.merchant_id
-    INNER JOIN station_cba_org_data scod 
-      ON cs.station_no = scod.station_no
-    WHERE 
-      cs.station_name LIKE '%%V2G%%'
-      AND (scod.cba_month like '%s' or scod.cba_month like '%s')
-
-    """ % (t1, t2)
-    DF_cba_pue_v2g = SQL(sql)
+    # 沿用现有 V2G 识别规则，从统一功率利用率数据集中按站名筛选。
+    DF_cba_pue_v2g = DF_cba_pue[
+        DF_cba_pue['station_name'].str.contains('V2G', case=False, na=False)
+        ].copy()
 
     # In[1167]:
 
     DF_cba_pue_v2g
 
     # In[1168]:
-
-    DF_cba_pue_v2g['days'] = DF_cba_pue_v2g['cba_month'].apply(get_days_in_month)
-    DF_cba_pue_v2g['year'] = [i[:4] for i in DF_cba_pue_v2g['cba_month']]
-
-    # In[1169]:
-
-    DF_cba_pue_v2g = DF_cba_pue_v2g[
-        (DF_cba_pue_v2g['station_capacity'].notna()) &
-        (DF_cba_pue['station_capacity'] > 0) &
-        (DF_cba_pue_v2g['plat_data_charging_volume'].notna())
-        ]
-
-    # In[1170]:
-
-    DF_cba_pue_v2g['pue'] = (
-                                    DF_cba_pue_v2g['plat_data_charging_volume'] /
-                                    (DF_cba_pue_v2g['station_capacity'] * DF_cba_pue_v2g['days'] * 24)
-                            ) * 100
-
-    # In[1171]:
-
-    DF_cba_pue_v2g['pue'] = DF_cba_pue_v2g['pue'].fillna(0)
-
-    # In[1172]:
-
-    DF_cba_pue_v2g['pue'] = DF_cba_pue_v2g['pue'].fillna(math.inf)
-
-    # In[1173]:
 
     # 保证月份是字符串
     DF_cba_pue_v2g['cba_month'] = DF_cba_pue_v2g['cba_month'].astype(str)
@@ -5847,8 +6035,10 @@ def runcityPublic_typeMonitoring():
         a.dc_charge_point_count,
         a.ac_charge_point_count
     FROM (
-        SELECT * FROM charging_station
-        WHERE station_name LIKE '%%V2G%%'
+        SELECT * FROM charging_station cs
+        WHERE cs.station_name LIKE '%%V2G%%'
+          AND cs.merchant_nature = '电动公司'
+          AND cs.operation_status IN ('投运','停运')
     ) a
     LEFT JOIN (
         SELECT * FROM fin_rec_result_detail 
@@ -5858,6 +6048,7 @@ def runcityPublic_typeMonitoring():
     ON a.station_no = b.station_no
     """
     df_v2g_mpa = SQL(sql)
+    df_v2g_mpa = limit_month_data_to_report_month(df_v2g_mpa, 'rec_month')
 
     # 2. 查询 station_cba_org_data（只保留 V2G 站点）
     sql = f"""
@@ -5868,8 +6059,10 @@ def runcityPublic_typeMonitoring():
         a.dc_charge_point_count,
         a.ac_charge_point_count
     FROM (
-        SELECT * FROM charging_station
-        WHERE station_name LIKE '%%V2G%%'
+        SELECT * FROM charging_station cs
+        WHERE cs.station_name LIKE '%%V2G%%'
+          AND cs.merchant_nature = '电动公司'
+          AND cs.operation_status IN ('投运','停运')
     ) a
     LEFT JOIN (
         SELECT * FROM station_cba_org_data 
@@ -5878,6 +6071,9 @@ def runcityPublic_typeMonitoring():
     ON a.station_no = b.station_no
     """
     df_v2g_cba_org = SQL(sql)
+    df_v2g_cba_org = limit_month_data_to_report_month(
+        df_v2g_cba_org, 'cba_month'
+    )
 
     # 3. 查询 station_maintenance_cost（只保留 V2G 并满足维护费用 > 0）
     sql = f"""
@@ -5888,6 +6084,9 @@ def runcityPublic_typeMonitoring():
     AND maintenance_cost > 0
     """
     df_v2g_maintenance = SQL(sql)
+    df_v2g_maintenance = limit_month_data_to_report_month(
+        df_v2g_maintenance, 'cba_month'
+    )
 
     # 4. 聚合 df_v2g_mpa，重命名列
     df_v2g_mpa = df_v2g_mpa.fillna(0)
@@ -6135,37 +6334,48 @@ def runcityPublic_typeMonitoring():
 
     sql = f"""
     SELECT 
-    cs.station_name,cs.station_no,cs.investment_amount,cs.commissioning_time,cs.station_category
+    cs.station_name,cs.station_no,cs.investment_amount,cs.commissioning_time,cs.station_category,cs.operation_status
     FROM
     charging_station cs
     LEFT JOIN rec_merchant rm ON cs.property_owner_merhant_id = rm.merchant_id
     where 
-    rm.merchant_name = '国网电动汽车服务（四川）有限公司'
-    and operation_status = '投运' 
-    and cs.commissioning_time <= '{M}'
+    cs.merchant_nature = '电动公司'
+    and operation_status in ('投运','停运')
+    and cs.commissioning_time < '{report_next_month_start_sql}'
 
     """
     DF_station = SQL(sql)
 
-    ybzdsl = len(DF_station)
+    DF_station_count = DF_station[
+        DF_station['operation_status'].isin(['投运', '停运'])
+        ].copy()
+    ybzdsl = len(DF_station_count)
     print(f"站点数量{ybzdsl}")
-    csgg_zdsl = len(DF_station[DF_station['station_category'] == '城市公共'])
+    csgg_zdsl = len(DF_station_count[DF_station_count['station_category'] == '城市公共'])
     print(f'城市公共站点数：{csgg_zdsl}')
 
-    zkzy_zdsl = len(DF_station[DF_station['station_category'] == '重卡专用'])
+    zkzy_zdsl = len(DF_station_count[DF_station_count['station_category'] == '重卡专用'])
     print(f'重卡专用站点数：{zkzy_zdsl}')
 
-    gongjiao_zdsl = len(DF_station[DF_station['station_category'] == '公交专用'])
+    gongjiao_zdsl = len(DF_station_count[DF_station_count['station_category'] == '公交专用'])
     print(f'公交专用站点数：{gongjiao_zdsl}')
 
-    gaosu_zdsl = len(DF_station[DF_station['station_category'] == '高速公共'])
+    gaosu_zdsl = len(DF_station_count[DF_station_count['station_category'] == '高速公共'])
     print(f'高速公共站点数：{gaosu_zdsl}')
 
-    xiaoqu_zdsl = len(DF_station[DF_station['station_category'] == '小区有序'])
+    xiaoqu_zdsl = len(DF_station_count[DF_station_count['station_category'] == '小区有序'])
     print(f'小区有序站点数：{xiaoqu_zdsl}')
 
-    qita_zdsl = len(DF_station[DF_station['station_category'] == '其他专用'])
+    qita_zdsl = len(DF_station_count[DF_station_count['station_category'] == '其他专用'])
     print(f'其他专用站点数：{qita_zdsl}')
+
+    # 回本属于投资相关指标，使用投运、退运和停运三种状态的站点口径。
+    DF_station_investment = DF_SCDD_INVESTMENT[
+        DF_SCDD_INVESTMENT['commissioning_time'].dt.strftime('%Y%m') <= M
+        ][[
+            'station_name', 'station_no', 'investment_amount', 'commissioning_time',
+            'station_category', 'operation_status'
+        ]].copy()
 
     sql = f"""
     select station_no,sum(total_subsidy) as total_subsidy from dp_subsidy_NEW
@@ -6186,8 +6396,8 @@ def runcityPublic_typeMonitoring():
     charging_station cs
     LEFT JOIN rec_merchant rm ON cs.property_owner_merhant_id = rm.merchant_id
     where 
-    rm.merchant_name = '国网电动汽车服务（四川）有限公司'
-    and operation_status in ('投运','退运') and  investment_amount is not null) a
+    cs.merchant_nature = '电动公司'
+    and operation_status in ('投运','退运','停运') and  investment_amount is not null) a
     left join 
     (select * from station_cba_org_data where cba_month <= '{M}' ) b
     on a.station_no =b.station_no
@@ -6207,7 +6417,7 @@ def runcityPublic_typeMonitoring():
     rec_merchant rm ON rmr.merchant_id = rm.merchant_id
     LEFT JOIN
     scdd_rec_rules sr ON rm.merchant_id = sr.merchant_id
-    where property_owner_merhant_id =119
+    where merchant_nature = '电动公司'
     and  JSON_UNQUOTE(JSON_EXTRACT(sr.profit_detail, '$.parkingFee')) IS NOT NULL 
 
     """
@@ -6224,8 +6434,8 @@ def runcityPublic_typeMonitoring():
     charging_station cs
     LEFT JOIN rec_merchant rm ON cs.property_owner_merhant_id = rm.merchant_id
     where 
-    rm.merchant_name = '国网电动汽车服务（四川）有限公司'
-    and cs.operation_status in ('投运','退运')
+    cs.merchant_nature = '电动公司'
+    and cs.operation_status in ('投运','退运','停运')
     ) a
     left join 
     (select * from fin_rec_result_detail where rec_month <%s and   merchant_id != 119 ) b
@@ -6240,7 +6450,7 @@ def runcityPublic_typeMonitoring():
     """
     DF_maintenance = SQL(sql)
     DF_maintenance = DF_maintenance.groupby('station_no').agg({'maintenance_cost': 'sum'}).reset_index()
-    DF_1 = pd.merge(DF_station, DF_cost_revenue, on='station_no', how='left')
+    DF_1 = pd.merge(DF_station_investment, DF_cost_revenue, on='station_no', how='left')
 
     # 处理投运时间字段
     DF_1['year'] = DF_1['commissioning_time'].dt.year
@@ -6274,7 +6484,7 @@ def runcityPublic_typeMonitoring():
     DF['out'] = DF['cost'].astype('float') + DF['investment_amount'].astype('float') + DF['merchant_profit_amount'].astype('float') + DF['maintenance_cost'].astype('float')
     sql1 = """
     SELECT 
-      b.station_no,
+      a.station_no,
       SUM(
         IFNULL(b.rec_data_elec_fee_revenue, 0) +
         IFNULL(b.rec_data_service_fee_revenue, 0) +
@@ -6294,7 +6504,8 @@ def runcityPublic_typeMonitoring():
       FROM charging_station cs
       LEFT JOIN rec_merchant rm ON cs.property_owner_merhant_id = rm.merchant_id
       WHERE 
-        rm.merchant_name = '国网电动汽车服务（四川）有限公司'
+        cs.merchant_nature = '电动公司'
+        AND cs.operation_status IN ('投运','退运','停运')
         AND investment_amount IS NOT NULL
         AND cs.station_name IN (
           '四川省成都市彭州市濛阳镇供电所电动汽车充电站',
@@ -6305,7 +6516,7 @@ def runcityPublic_typeMonitoring():
         )
     ) a
     LEFT JOIN station_cba_org_data b ON a.station_no = b.station_no
-    GROUP BY a.station_name, b.station_no
+    GROUP BY a.station_name, a.station_no
 
     """
     df1 = SQL(sql1)
@@ -6325,7 +6536,8 @@ def runcityPublic_typeMonitoring():
     FROM charging_station cs
     LEFT JOIN rec_merchant rm ON cs.property_owner_merhant_id = rm.merchant_id
     WHERE 
-      rm.merchant_name = '国网电动汽车服务（四川）有限公司'
+      cs.merchant_nature = '电动公司'
+      AND cs.operation_status IN ('投运','退运','停运')
       AND cs.station_no IN (
       "300003000100002472",
       "300003000100002473",
@@ -6364,14 +6576,38 @@ def runcityPublic_typeMonitoring():
     df_temp['merchant_profit_amount'] = df_temp['merchant_profit_amount'] / 10000
     df_temp['in'] = df_temp['revenue'].astype('float') + df_temp['total_subsidy'].astype('float')
     df_temp['out'] = df_temp['cost'].astype('float') + df_temp['investment_amount'].astype('float') + df_temp['merchant_profit_amount'].astype('float') + df_temp['maintenance_cost'].astype('float')
-    DF.loc[DF['station_no'] == '300003000100019488', 'in'] = DF[DF['station_no'] == '300003000100019488']['in'].values[0] + df_temp[df_temp['station_no'] == '300003013200108']['in'].values[0]
-    DF.loc[DF['station_no'] == '300003000100017539', 'in'] = DF[DF['station_no'] == '300003000100017539']['in'].values[0] + df_temp[df_temp['station_no'] == '300003000100002472']['in'].values[0]
-    DF.loc[DF['station_no'] == '300003000100017538', 'in'] = DF[DF['station_no'] == '300003000100017538']['in'].values[0] + df_temp[df_temp['station_no'] == '300003000100002473']['in'].values[0]
-    DF.loc[DF['station_no'] == '300003000100019487', 'in'] = DF[DF['station_no'] == '300003000100019487']['in'].values[0] + df_temp[df_temp['station_no'] == '300003013200011']['in'].values[0] + df_temp[df_temp['station_no'] == '300003013200099']['in'].values[0]
-    DF.loc[DF['station_no'] == '300003000100019488', 'out'] = DF[DF['station_no'] == '300003000100019488']['out'].values[0] + df_temp[df_temp['station_no'] == '300003013200108']['out'].values[0]
-    DF.loc[DF['station_no'] == '300003000100017539', 'out'] = DF[DF['station_no'] == '300003000100017539']['out'].values[0] + df_temp[df_temp['station_no'] == '300003000100002472']['out'].values[0]
-    DF.loc[DF['station_no'] == '300003000100017538', 'out'] = DF[DF['station_no'] == '300003000100017538']['out'].values[0] + df_temp[df_temp['station_no'] == '300003000100002473']['out'].values[0]
-    DF.loc[DF['station_no'] == '300003000100019487', 'out'] = DF[DF['station_no'] == '300003000100019487']['out'].values[0] + df_temp[df_temp['station_no'] == '300003013200011']['out'].values[0] + df_temp[df_temp['station_no'] == '300003013200099']['out'].values[0]
+    special_station_merges = {
+        '300003000100019488': ['300003013200108'],
+        '300003000100017539': ['300003000100002472'],
+        '300003000100017538': ['300003000100002473'],
+        '300003000100019487': ['300003013200011', '300003013200099'],
+    }
+    special_finance = df_temp.groupby('station_no')[['in', 'out']].sum()
+    for target_station, source_stations in special_station_merges.items():
+        target_mask = DF['station_no'] == target_station
+        if not target_mask.any():
+            logger.warning(f"特殊合并主站不存在，跳过合并: {target_station}")
+            continue
+
+        missing_sources = [
+            station_no for station_no in source_stations
+            if station_no not in special_finance.index
+        ]
+        if missing_sources:
+            logger.warning(
+                f"特殊合并附属站无财务数据，按0处理: {missing_sources}"
+            )
+
+        additional_finance = special_finance.reindex(
+            source_stations, fill_value=0
+        ).sum()
+        for column in ['in', 'out']:
+            current_values = pd.to_numeric(
+                DF.loc[target_mask, column], errors='coerce'
+            ).fillna(0)
+            DF.loc[target_mask, column] = (
+                current_values + additional_finance[column]
+            )
     DF = DF[DF['investment_amount'] != 0]
     huibenzhandian = DF[DF['in'] > DF['out']]
     huibenzhandian.groupby('station_category').agg({'station_no': 'count'})
@@ -6420,11 +6656,12 @@ def runcityPublic_typeMonitoring():
     charging_station cs
     LEFT JOIN rec_merchant rm ON cs.property_owner_merhant_id = rm.merchant_id
     where 
-    rm.merchant_name = '国网电动汽车服务（四川）有限公司'
-    and operation_status ='投运' 
+    cs.merchant_nature = '电动公司'
+    and operation_status in ('投运','停运')
 
     """
     DFF_station = SQL(sql)
+    DFF_station = limit_stations_to_report_month(DFF_station)
 
     sql = f"""
     select station_no,sum(total_subsidy) as total_subsidy from dp_subsidy_NEW
@@ -6446,14 +6683,17 @@ def runcityPublic_typeMonitoring():
     charging_station cs
     LEFT JOIN rec_merchant rm ON cs.property_owner_merhant_id = rm.merchant_id
     where 
-    rm.merchant_name = '国网电动汽车服务（四川）有限公司'
-    and operation_status ='投运' and  investment_amount is not null) a
+    cs.merchant_nature = '电动公司'
+    and operation_status in ('投运','停运') and  investment_amount is not null) a
     left join 
     (select * from station_cba_org_data  ) b
     on a.station_no =b.station_no
     GROUP BY  b.station_no,b.cba_month
     """
     DFF_cost_revenue = SQL(sql)
+    DFF_cost_revenue = limit_month_data_to_report_month(
+        DFF_cost_revenue, 'cba_month'
+    )
 
     sql = """
     SELECT
@@ -6467,7 +6707,7 @@ def runcityPublic_typeMonitoring():
     rec_merchant rm ON rmr.merchant_id = rm.merchant_id
     LEFT JOIN
     scdd_rec_rules sr ON rm.merchant_id = sr.merchant_id
-    where property_owner_merhant_id =119
+    where merchant_nature = '电动公司'
     and  JSON_UNQUOTE(JSON_EXTRACT(sr.profit_detail, '$.parkingFee')) IS NOT NULL 
 
     """
@@ -6484,14 +6724,17 @@ def runcityPublic_typeMonitoring():
     charging_station cs
     LEFT JOIN rec_merchant rm ON cs.property_owner_merhant_id = rm.merchant_id
     where 
-    rm.merchant_name = '国网电动汽车服务（四川）有限公司'
-    and cs.operation_status in ('投运')
+    cs.merchant_nature = '电动公司'
+    and cs.operation_status in ('投运','停运')
     ) a
     left join 
     (select * from fin_rec_result_detail where rec_month <%s and   merchant_id != 119 ) b
     on a.station_no =b.station_no
     """ % (M_next)
     DFF_fin_rec_result_detail = SQL(sql)
+    DFF_fin_rec_result_detail = limit_month_data_to_report_month(
+        DFF_fin_rec_result_detail, 'rec_month'
+    )
 
     # ## 城市公共
 
@@ -6548,25 +6791,17 @@ def runcityPublic_typeMonitoring():
     # In[1216]:
 
     df_zdzb = DF_SCDD[
-        (DF_SCDD['operation_status'] == '投运') &
+        (DF_SCDD['operation_status'].isin(['投运', '停运'])) &
         (DF_SCDD['station_category'] == '城市公共')
+        ].copy()
+    df_zdzb_investment = DF_SCDD_INVESTMENT[
+        DF_SCDD_INVESTMENT['station_category'] == '城市公共'
         ].copy()
 
     # In[1217]:
 
-    result_station_point = (
-        df_zdzb
-        .assign(
-            total_charge_point_count=lambda df: df['ac_charge_point_count'].fillna(0) + df['dc_charge_point_count'].fillna(0)
-        )
-        .groupby('station_no')
-        .agg(
-            station_name=('station_name', 'first'),
-            total_charge_point_count=('total_charge_point_count', 'sum'),
-            total_station_capacity=('station_capacity', 'sum'),
-            total_investment_amount=('investment_amount', 'sum')
-        )
-        .reset_index()
+    result_station_point = build_nowpoint_station_base(
+        df_zdzb, df_zdzb_investment
     )
 
     # In[1218]:
@@ -6574,10 +6809,14 @@ def runcityPublic_typeMonitoring():
     # 假设你已有的站点信息表叫 df_station（你发的DataFrame）
     # 且另有一个投资记录表 df_investment，包含 station_no、investment_amount、investment_time 字段
 
-    df_zdzb['investment_time'] = pd.to_datetime(df_zdzb['commissioning_time'])
+    df_zdzb_investment['investment_time'] = pd.to_datetime(
+        df_zdzb_investment['commissioning_time']
+    )
 
     # 筛选出 2025 年发生的投资
-    df_2025 = df_zdzb[df_zdzb['investment_time'].dt.year == year]
+    df_2025 = df_zdzb_investment[
+        df_zdzb_investment['investment_time'].dt.year == year
+        ]
 
     # 汇总每个站点的投资总额
     df_2025_total = df_2025.groupby('station_no', as_index=False)['investment_amount'].sum()
@@ -6595,7 +6834,7 @@ def runcityPublic_typeMonitoring():
         DF[['station_no', 'hbpercentage']]
         .fillna({'hbpercentage': 0})
         .merge(
-            DF_SCDD[['station_no', 'station_category']],
+            investment_station_categories,
             on='station_no',
             how='left'
         )
@@ -6946,18 +7185,8 @@ def runcityPublic_typeMonitoring():
 
     # In[1265]:
 
-    result_city_point = (
-        DF_SCDD[(DF_SCDD['station_category'] == '城市公共') & (DF_SCDD['operation_status'] == '投运')]
-        .assign(
-            total_charge_point_count=lambda df: df['dc_charge_point_count'].fillna(0) + df['ac_charge_point_count'].fillna(0)
-        )
-        .groupby('city')
-        .agg(
-            total_charge_point_count=('total_charge_point_count', 'sum'),
-            total_station_capacity=('station_capacity', 'sum'),
-            total_investment_amount=('investment_amount', 'sum')
-        )
-        .reset_index()
+    result_city_point = build_nowpoint_city_base(
+        df_zdzb, df_zdzb_investment
     )
     result_city_point
 
@@ -6973,7 +7202,7 @@ def runcityPublic_typeMonitoring():
 
     # In[1267]:
 
-    result_city_earn1 = pd.merge(result_city_point, result_city_earn, on='city', how='inner')
+    result_city_earn1 = pd.merge(result_city_point, result_city_earn, on='city', how='left')
 
     # In[1268]:
     DF_org_data_pre_gun ['days_in_month'] = DF_org_data_pre_gun['cba_month'].apply(lambda x: calendar.monthrange(int(x[:4]), int(x[4:]))[1])
@@ -6995,12 +7224,16 @@ def runcityPublic_typeMonitoring():
 
     # In[1271]:
 
-    result_city_vloumes1 = pd.merge(result_city_earn1, result_city_vloumes, on='city', how='inner')
+    result_city_vloumes1 = pd.merge(result_city_earn1, result_city_vloumes, on='city', how='left')
 
     # In[1272]:
 
     result_city_cba_pue = (
-        DF_cba_pue.groupby('city')['pue']
+        DF_cba_pue[
+            (DF_cba_pue['station_category'] == '城市公共') &
+            (DF_cba_pue['cba_month'] == M)
+        ]
+        .groupby('city')['pue']
         .mean()
         .reset_index()
         .rename(columns={'pue': '功率利用率'})
@@ -7013,7 +7246,13 @@ def runcityPublic_typeMonitoring():
 
     # In[1274]:
 
-    city_fianl_count = pd.merge(result_city_vloumes1, result_city_cba_pue, on='city', how='inner')
+    city_investment_payback = build_nowpoint_city_payback(
+        DF, df_zdzb_investment
+    )
+    city_fianl_count = pd.merge(result_city_vloumes1, result_city_cba_pue, on='city', how='left')
+    city_fianl_count = pd.merge(
+        city_fianl_count, city_investment_payback, on='city', how='left'
+    )
 
     # In[1275]:
 
@@ -7035,12 +7274,6 @@ def runcityPublic_typeMonitoring():
     city_fianl_count['earn'] = city_fianl_count['earn'] / 10000
     city_fianl_count['earn'] = city_fianl_count['earn'].apply(float)
     city_fianl_count['earn'] = city_fianl_count['earn'].round(2)
-    city_fianl_count['payback'] = np.where(
-        city_fianl_count['total_investment_amount'] == 0,
-        0,
-        city_fianl_count['earn'] / city_fianl_count['total_investment_amount']
-    )
-
     # In[1279]:
 
     city_fianl_count
@@ -7107,7 +7340,7 @@ def runcityPublic_typeMonitoring():
 
     EQ_P = pd.merge(
         DF_operation_duration1,
-        DF_SCDD[(DF_SCDD['station_category'] == '城市公共') & (DF_SCDD['operation_status'] == '投运')],
+        DF_SCDD[(DF_SCDD['station_category'] == '城市公共') & (DF_SCDD['operation_status'].isin(['投运', '停运']))],
         on='station_no',
         how='inner'
     )
@@ -7395,25 +7628,17 @@ def runcityPublic_typeMonitoring():
     # In[1306]:
 
     df_zdzb_zk = DF_SCDD[
-        (DF_SCDD['operation_status'] == '投运') &
+        (DF_SCDD['operation_status'].isin(['投运', '停运'])) &
         (DF_SCDD['station_category'] == '重卡专用')
+        ].copy()
+    df_zdzb_zk_investment = DF_SCDD_INVESTMENT[
+        DF_SCDD_INVESTMENT['station_category'] == '重卡专用'
         ].copy()
 
     # In[1307]:
 
-    result_station_point = (
-        df_zdzb_zk
-        .assign(
-            total_charge_point_count=lambda df: df['ac_charge_point_count'].fillna(0) + df['dc_charge_point_count'].fillna(0)
-        )
-        .groupby('station_no')
-        .agg(
-            station_name=('station_name', 'first'),
-            total_charge_point_count=('total_charge_point_count', 'sum'),
-            total_station_capacity=('station_capacity', 'sum'),
-            total_investment_amount=('investment_amount', 'sum')
-        )
-        .reset_index()
+    result_station_point = build_nowpoint_station_base(
+        df_zdzb_zk, df_zdzb_zk_investment
     )
 
     # In[1308]:
@@ -7429,10 +7654,14 @@ def runcityPublic_typeMonitoring():
     # 假设你已有的站点信息表叫 df_station（你发的DataFrame）
     # 且另有一个投资记录表 df_investment，包含 station_no、investment_amount、investment_time 字段
 
-    df_zdzb_zk['investment_time'] = pd.to_datetime(df_zdzb_zk['commissioning_time'])
+    df_zdzb_zk_investment['investment_time'] = pd.to_datetime(
+        df_zdzb_zk_investment['commissioning_time']
+    )
 
     # 筛选出 2025 年发生的投资
-    df_2025_zk = df_zdzb_zk[df_zdzb_zk['investment_time'].dt.year == year]
+    df_2025_zk = df_zdzb_zk_investment[
+        df_zdzb_zk_investment['investment_time'].dt.year == year
+        ]
 
     # 汇总每个站点的投资总额
     df_2025_total_zk = df_2025_zk.groupby('station_no', as_index=False)['investment_amount'].sum()
@@ -7448,7 +7677,7 @@ def runcityPublic_typeMonitoring():
         DF[['station_no', 'hbpercentage']]
         .fillna({'hbpercentage': 0})
         .merge(
-            DF_SCDD[['station_no', 'station_category']],
+            investment_station_categories,
             on='station_no',
             how='left'
         )
@@ -7660,18 +7889,8 @@ def runcityPublic_typeMonitoring():
 
     # In[1329]:
 
-    zk_result_city_point = (
-        DF_SCDD[(DF_SCDD['station_category'] == '重卡专用') & (DF_SCDD['operation_status'] == '投运')]
-        .assign(
-            total_charge_point_count=lambda df: df['dc_charge_point_count'].fillna(0) + df['ac_charge_point_count'].fillna(0)
-        )
-        .groupby('city')
-        .agg(
-            total_charge_point_count=('total_charge_point_count', 'sum'),
-            total_station_capacity=('station_capacity', 'sum'),
-            total_investment_amount=('investment_amount', 'sum')
-        )
-        .reset_index()
+    zk_result_city_point = build_nowpoint_city_base(
+        df_zdzb_zk, df_zdzb_zk_investment
     )
     zk_result_city_point
 
@@ -7689,7 +7908,7 @@ def runcityPublic_typeMonitoring():
 
     # In[1331]:
 
-    zk_result_city_earn1 = pd.merge(zk_result_city_point, zk_result_city_earn, on='city', how='inner')
+    zk_result_city_earn1 = pd.merge(zk_result_city_point, zk_result_city_earn, on='city', how='left')
 
     # In[1332]:
 
@@ -7709,7 +7928,7 @@ def runcityPublic_typeMonitoring():
 
     # In[1334]:
 
-    zk_result_city_vloumes1 = pd.merge(zk_result_city_earn1, zk_result_city_vloumes, on='city', how='inner')
+    zk_result_city_vloumes1 = pd.merge(zk_result_city_earn1, zk_result_city_vloumes, on='city', how='left')
 
     # In[1335]:
 
@@ -7729,7 +7948,13 @@ def runcityPublic_typeMonitoring():
 
     # In[1337]:
 
-    zk_city_fianl_count = pd.merge(zk_result_city_vloumes1, zk_result_city_cba_pue, on='city', how='inner')
+    zk_city_investment_payback = build_nowpoint_city_payback(
+        DF, df_zdzb_zk_investment
+    )
+    zk_city_fianl_count = pd.merge(zk_result_city_vloumes1, zk_result_city_cba_pue, on='city', how='left')
+    zk_city_fianl_count = pd.merge(
+        zk_city_fianl_count, zk_city_investment_payback, on='city', how='left'
+    )
 
     # In[1338]:
 
@@ -7744,12 +7969,6 @@ def runcityPublic_typeMonitoring():
     zk_city_fianl_count['total_investment_amount'] = zk_city_fianl_count['total_investment_amount'].apply(float)
     zk_city_fianl_count['earn'] = zk_city_fianl_count['earn'] / 10000
     zk_city_fianl_count['earn'] = zk_city_fianl_count['earn'].round(2)
-    zk_city_fianl_count['payback'] = np.where(
-        zk_city_fianl_count['total_investment_amount'] == 0,
-        0,
-        zk_city_fianl_count['earn'] / zk_city_fianl_count['total_investment_amount']
-    )
-
     # In[1340]:
 
     zk_city_fianl_count
@@ -7796,7 +8015,7 @@ def runcityPublic_typeMonitoring():
 
     zk_EQ_P = pd.merge(
         DF_operation_duration1,
-        DF_SCDD[(DF_SCDD['station_category'] == '重卡专用') & (DF_SCDD['operation_status'] == '投运')],
+        DF_SCDD[(DF_SCDD['station_category'] == '重卡专用') & (DF_SCDD['operation_status'].isin(['投运', '停运']))],
         on='station_no',
         how='inner'
     )
@@ -8031,30 +8250,22 @@ def runcityPublic_typeMonitoring():
     # In[1356]:
 
     df_zdzb_gs = DF_SCDD[
-        (DF_SCDD['operation_status'] == '投运') &
+        (DF_SCDD['operation_status'].isin(['投运', '停运'])) &
         (DF_SCDD['station_category'] == '高速公共')
         ].copy()
+    df_zdzb_gs_investment = DF_SCDD_INVESTMENT[
+        DF_SCDD_INVESTMENT['station_category'] == '高速公共'
+        ].copy()
 
-    result_station_point_gs = (
-        df_zdzb_gs
-        .assign(
-            total_charge_point_count=lambda df: df['ac_charge_point_count'].fillna(0) + df['dc_charge_point_count'].fillna(0)
-        )
-        .groupby('station_no')
-        .agg(
-            station_name=('station_name', 'first'),
-            total_charge_point_count=('total_charge_point_count', 'sum'),
-            total_station_capacity=('station_capacity', 'sum'),
-            total_investment_amount=('investment_amount', 'sum')
-        )
-        .reset_index()
+    result_station_point_gs = build_nowpoint_station_base(
+        df_zdzb_gs, df_zdzb_gs_investment
     )
 
     hbpercentage_gs = (
         DF[['station_no', 'hbpercentage']]
         .fillna({'hbpercentage': 0})
         .merge(
-            DF_SCDD[['station_no', 'station_category']],
+            investment_station_categories,
             on='station_no',
             how='left'
         )
@@ -8219,18 +8430,8 @@ def runcityPublic_typeMonitoring():
 
     # In[1358]:
 
-    gs_result_city_point = (
-        DF_SCDD[(DF_SCDD['station_category'] == '高速公共') & (DF_SCDD['operation_status'] == '投运')]
-        .assign(
-            total_charge_point_count=lambda df: df['dc_charge_point_count'].fillna(0) + df['ac_charge_point_count'].fillna(0)
-        )
-        .groupby('city')
-        .agg(
-            total_charge_point_count=('total_charge_point_count', 'sum'),
-            total_station_capacity=('station_capacity', 'sum'),
-            total_investment_amount=('investment_amount', 'sum')
-        )
-        .reset_index()
+    gs_result_city_point = build_nowpoint_city_base(
+        df_zdzb_gs, df_zdzb_gs_investment
     )
 
     # 营收
@@ -8241,7 +8442,7 @@ def runcityPublic_typeMonitoring():
         .sum()
         .round(2)
     )
-    gs_result_city_earn1 = pd.merge(gs_result_city_point, gs_result_city_earn, on='city', how='inner')
+    gs_result_city_earn1 = pd.merge(gs_result_city_point, gs_result_city_earn, on='city', how='left')
 
     gs_DF_cba_org_dataquyu = DF_org_data_pre_gun[
         (DF_org_data_pre_gun['cba_month'] == M) &
@@ -8257,7 +8458,7 @@ def runcityPublic_typeMonitoring():
         .round(2)
     )
 
-    gs_result_city_vloumes1 = pd.merge(gs_result_city_earn1, gs_result_city_vloumes, on='city', how='inner')
+    gs_result_city_vloumes1 = pd.merge(gs_result_city_earn1, gs_result_city_vloumes, on='city', how='left')
 
     gs_result_city_cba_pue = (
         DF_cba_pue[(DF_cba_pue['station_category'] == '高速公共') & (DF_cba_pue['cba_month'] == M)]
@@ -8268,7 +8469,13 @@ def runcityPublic_typeMonitoring():
         .round(2)
     )
 
-    gs_city_final_count = pd.merge(gs_result_city_vloumes1, gs_result_city_cba_pue, on='city', how='inner')
+    gs_city_investment_payback = build_nowpoint_city_payback(
+        DF, df_zdzb_gs_investment
+    )
+    gs_city_final_count = pd.merge(gs_result_city_vloumes1, gs_result_city_cba_pue, on='city', how='left')
+    gs_city_final_count = pd.merge(
+        gs_city_final_count, gs_city_investment_payback, on='city', how='left'
+    )
 
     gs_city_final_count = gs_city_final_count.fillna(0)
     gs_city_final_count = gs_city_final_count[gs_city_final_count['total_investment_amount'] != 0]
@@ -8278,7 +8485,6 @@ def runcityPublic_typeMonitoring():
     gs_city_final_count['earn'] = gs_city_final_count['earn'] / 10000
 
     gs_city_final_count['total_investment_amount'] = gs_city_final_count['total_investment_amount'].round(2)
-    gs_city_final_count['payback'] = gs_city_final_count['earn'] / gs_city_final_count['total_investment_amount']
     gs_city_final_count
 
     # In[1359]:
@@ -8309,7 +8515,7 @@ def runcityPublic_typeMonitoring():
 
     gs_EQ_P = pd.merge(
         DF_operation_duration1,
-        DF_SCDD[(DF_SCDD['station_category'] == '高速公共') & (DF_SCDD['operation_status'] == '投运')],
+        DF_SCDD[(DF_SCDD['station_category'] == '高速公共') & (DF_SCDD['operation_status'].isin(['投运', '停运']))],
         on='station_no',
         how='inner'
     )
@@ -8516,30 +8722,22 @@ def runcityPublic_typeMonitoring():
     # In[1364]:
 
     df_zdzb_gongjiao = DF_SCDD[
-        (DF_SCDD['operation_status'] == '投运') &
+        (DF_SCDD['operation_status'].isin(['投运', '停运'])) &
         (DF_SCDD['station_category'] == '公交专用')
         ].copy()
+    df_zdzb_gongjiao_investment = DF_SCDD_INVESTMENT[
+        DF_SCDD_INVESTMENT['station_category'] == '公交专用'
+        ].copy()
 
-    result_station_point_gongjiao = (
-        df_zdzb_gongjiao
-        .assign(
-            total_charge_point_count=lambda df: df['ac_charge_point_count'].fillna(0) + df['dc_charge_point_count'].fillna(0)
-        )
-        .groupby('station_no')
-        .agg(
-            station_name=('station_name', 'first'),
-            total_charge_point_count=('total_charge_point_count', 'sum'),
-            total_station_capacity=('station_capacity', 'sum'),
-            total_investment_amount=('investment_amount', 'sum')
-        )
-        .reset_index()
+    result_station_point_gongjiao = build_nowpoint_station_base(
+        df_zdzb_gongjiao, df_zdzb_gongjiao_investment
     )
 
     hbpercentage_gongjiao = (
         DF[['station_no', 'hbpercentage']]
         .fillna({'hbpercentage': 0})
         .merge(
-            DF_SCDD[['station_no', 'station_category']],
+            investment_station_categories,
             on='station_no',
             how='left'
         )
@@ -8701,18 +8899,8 @@ def runcityPublic_typeMonitoring():
 
     # In[1366]:
 
-    gongjiao_result_city_point = (
-        DF_SCDD[(DF_SCDD['station_category'] == '公交专用') & (DF_SCDD['operation_status'] == '投运')]
-        .assign(
-            total_charge_point_count=lambda df: df['dc_charge_point_count'].fillna(0) + df['ac_charge_point_count'].fillna(0)
-        )
-        .groupby('city')
-        .agg(
-            total_charge_point_count=('total_charge_point_count', 'sum'),
-            total_station_capacity=('station_capacity', 'sum'),
-            total_investment_amount=('investment_amount', 'sum')
-        )
-        .reset_index()
+    gongjiao_result_city_point = build_nowpoint_city_base(
+        df_zdzb_gongjiao, df_zdzb_gongjiao_investment
     )
 
     # 营收
@@ -8724,7 +8912,7 @@ def runcityPublic_typeMonitoring():
         .round(2)
     )
 
-    gongjiao_result_city_earn1 = pd.merge(gongjiao_result_city_point, gongjiao_result_city_earn, on='city', how='inner')
+    gongjiao_result_city_earn1 = pd.merge(gongjiao_result_city_point, gongjiao_result_city_earn, on='city', how='left')
 
     gongjiao_DF_cba_org_dataquyu = DF_org_data_pre_gun[
         (DF_org_data_pre_gun['cba_month'] == M) &
@@ -8740,7 +8928,7 @@ def runcityPublic_typeMonitoring():
         .round(2)
     )
 
-    gongjiao_result_city_vloumes1 = pd.merge(gongjiao_result_city_earn1, gongjiao_result_city_vloumes, on='city', how='inner')
+    gongjiao_result_city_vloumes1 = pd.merge(gongjiao_result_city_earn1, gongjiao_result_city_vloumes, on='city', how='left')
 
     gongjiao_result_city_cba_pue = (
         DF_cba_pue[(DF_cba_pue['station_category'] == '公交专用') & (DF_cba_pue['cba_month'] == M)]
@@ -8751,7 +8939,16 @@ def runcityPublic_typeMonitoring():
         .round(2)
     )
 
-    gongjiao_city_final_count = pd.merge(gongjiao_result_city_vloumes1, gongjiao_result_city_cba_pue, on='city', how='inner')
+    gongjiao_city_investment_payback = build_nowpoint_city_payback(
+        DF, df_zdzb_gongjiao_investment
+    )
+    gongjiao_city_final_count = pd.merge(gongjiao_result_city_vloumes1, gongjiao_result_city_cba_pue, on='city', how='left')
+    gongjiao_city_final_count = pd.merge(
+        gongjiao_city_final_count,
+        gongjiao_city_investment_payback,
+        on='city',
+        how='left'
+    )
 
     gongjiao_city_final_count = gongjiao_city_final_count.fillna(0)
     gongjiao_city_final_count = gongjiao_city_final_count[gongjiao_city_final_count['total_investment_amount'] != 0]
@@ -8760,7 +8957,6 @@ def runcityPublic_typeMonitoring():
     gongjiao_city_final_count['total_investment_amount'] = gongjiao_city_final_count['total_investment_amount'].round(2)
     gongjiao_city_final_count['earn'] = gongjiao_city_final_count['earn'].apply(float)
     gongjiao_city_final_count['earn'] = gongjiao_city_final_count['earn'] / 10000
-    gongjiao_city_final_count['payback'] = gongjiao_city_final_count['earn'] / gongjiao_city_final_count['total_investment_amount']
     gongjiao_city_final_count
 
     # In[1367]:
@@ -8791,7 +8987,7 @@ def runcityPublic_typeMonitoring():
 
     gongjiao_EQ_P = pd.merge(
         DF_operation_duration1,
-        DF_SCDD[(DF_SCDD['station_category'] == '公交专用') & (DF_SCDD['operation_status'] == '投运')],
+        DF_SCDD[(DF_SCDD['station_category'] == '公交专用') & (DF_SCDD['operation_status'].isin(['投运', '停运']))],
         on='station_no',
         how='inner'
     )
@@ -9012,30 +9208,22 @@ def runcityPublic_typeMonitoring():
     # In[1374]:
 
     df_zdzb_xiaoqu = DF_SCDD[
-        (DF_SCDD['operation_status'] == '投运') &
+        (DF_SCDD['operation_status'].isin(['投运', '停运'])) &
         (DF_SCDD['station_category'] == '小区有序')
         ].copy()
+    df_zdzb_xiaoqu_investment = DF_SCDD_INVESTMENT[
+        DF_SCDD_INVESTMENT['station_category'] == '小区有序'
+        ].copy()
 
-    result_station_point_xiaoqu = (
-        df_zdzb_xiaoqu
-        .assign(
-            total_charge_point_count=lambda df: df['ac_charge_point_count'].fillna(0) + df['dc_charge_point_count'].fillna(0)
-        )
-        .groupby('station_no')
-        .agg(
-            station_name=('station_name', 'first'),
-            total_charge_point_count=('total_charge_point_count', 'sum'),
-            total_station_capacity=('station_capacity', 'sum'),
-            total_investment_amount=('investment_amount', 'sum')
-        )
-        .reset_index()
+    result_station_point_xiaoqu = build_nowpoint_station_base(
+        df_zdzb_xiaoqu, df_zdzb_xiaoqu_investment
     )
 
     hbpercentage_xiaoqu = (
         DF[['station_no', 'hbpercentage']]
         .fillna({'hbpercentage': 0})
         .merge(
-            DF_SCDD[['station_no', 'station_category']],
+            investment_station_categories,
             on='station_no',
             how='left'
         )
@@ -9197,18 +9385,8 @@ def runcityPublic_typeMonitoring():
 
     # In[1376]:
 
-    xiaoqu_result_city_point = (
-        DF_SCDD[(DF_SCDD['station_category'] == '小区有序') & (DF_SCDD['operation_status'] == '投运')]
-        .assign(
-            total_charge_point_count=lambda df: df['dc_charge_point_count'].fillna(0) + df['ac_charge_point_count'].fillna(0)
-        )
-        .groupby('city')
-        .agg(
-            total_charge_point_count=('total_charge_point_count', 'sum'),
-            total_station_capacity=('station_capacity', 'sum'),
-            total_investment_amount=('investment_amount', 'sum')
-        )
-        .reset_index()
+    xiaoqu_result_city_point = build_nowpoint_city_base(
+        df_zdzb_xiaoqu, df_zdzb_xiaoqu_investment
     )
 
     # 营收
@@ -9220,7 +9398,7 @@ def runcityPublic_typeMonitoring():
         .round(2)
     )
 
-    xiaoqu_result_city_earn1 = pd.merge(xiaoqu_result_city_point, xiaoqu_result_city_earn, on='city', how='inner')
+    xiaoqu_result_city_earn1 = pd.merge(xiaoqu_result_city_point, xiaoqu_result_city_earn, on='city', how='left')
 
     xiaoqu_DF_cba_org_dataquyu = DF_org_data_pre_gun[
         (DF_org_data_pre_gun['cba_month'] == M) &
@@ -9236,7 +9414,7 @@ def runcityPublic_typeMonitoring():
         .round(2)
     )
 
-    xiaoqu_result_city_vloumes1 = pd.merge(xiaoqu_result_city_earn1, xiaoqu_result_city_vloumes, on='city', how='inner')
+    xiaoqu_result_city_vloumes1 = pd.merge(xiaoqu_result_city_earn1, xiaoqu_result_city_vloumes, on='city', how='left')
 
     xiaoqu_result_city_cba_pue = (
         DF_cba_pue[(DF_cba_pue['station_category'] == '小区有序') & (DF_cba_pue['cba_month'] == M)]
@@ -9247,7 +9425,16 @@ def runcityPublic_typeMonitoring():
         .round(2)
     )
 
-    xiaoqu_city_final_count = pd.merge(xiaoqu_result_city_vloumes1, xiaoqu_result_city_cba_pue, on='city', how='inner')
+    xiaoqu_city_investment_payback = build_nowpoint_city_payback(
+        DF, df_zdzb_xiaoqu_investment
+    )
+    xiaoqu_city_final_count = pd.merge(xiaoqu_result_city_vloumes1, xiaoqu_result_city_cba_pue, on='city', how='left')
+    xiaoqu_city_final_count = pd.merge(
+        xiaoqu_city_final_count,
+        xiaoqu_city_investment_payback,
+        on='city',
+        how='left'
+    )
 
     xiaoqu_city_final_count = xiaoqu_city_final_count.fillna(0)
     xiaoqu_city_final_count = xiaoqu_city_final_count[xiaoqu_city_final_count['total_investment_amount'] != 0]
@@ -9255,7 +9442,6 @@ def runcityPublic_typeMonitoring():
 
     xiaoqu_city_final_count[cols] = (xiaoqu_city_final_count[cols].astype(float) / 10000).round(2)
 
-    xiaoqu_city_final_count['payback'] = xiaoqu_city_final_count['earn'] / xiaoqu_city_final_count['total_investment_amount']
     xiaoqu_city_final_count
 
     # In[1377]:
@@ -9287,7 +9473,7 @@ def runcityPublic_typeMonitoring():
 
     xiaoqu_EQ_P = pd.merge(
         DF_operation_duration1,
-        DF_SCDD[(DF_SCDD['station_category'] == '小区有序') & (DF_SCDD['operation_status'] == '投运')],
+        DF_SCDD[(DF_SCDD['station_category'] == '小区有序') & (DF_SCDD['operation_status'].isin(['投运', '停运']))],
         on='station_no',
         how='inner'
     )
@@ -9498,30 +9684,22 @@ def runcityPublic_typeMonitoring():
     # In[1382]:
 
     df_zdzb_qita = DF_SCDD[
-        (DF_SCDD['operation_status'] == '投运') &
+        (DF_SCDD['operation_status'].isin(['投运', '停运'])) &
         (DF_SCDD['station_category'] == '其他专用')
         ].copy()
+    df_zdzb_qita_investment = DF_SCDD_INVESTMENT[
+        DF_SCDD_INVESTMENT['station_category'] == '其他专用'
+        ].copy()
 
-    result_station_point_qita = (
-        df_zdzb_qita
-        .assign(
-            total_charge_point_count=lambda df: df['ac_charge_point_count'].fillna(0) + df['dc_charge_point_count'].fillna(0)
-        )
-        .groupby('station_no')
-        .agg(
-            station_name=('station_name', 'first'),
-            total_charge_point_count=('total_charge_point_count', 'sum'),
-            total_station_capacity=('station_capacity', 'sum'),
-            total_investment_amount=('investment_amount', 'sum')
-        )
-        .reset_index()
+    result_station_point_qita = build_nowpoint_station_base(
+        df_zdzb_qita, df_zdzb_qita_investment
     )
 
     hbpercentage_qita = (
         DF[['station_no', 'hbpercentage']]
         .fillna({'hbpercentage': 0})
         .merge(
-            DF_SCDD[['station_no', 'station_category']],
+            investment_station_categories,
             on='station_no',
             how='left'
         )
@@ -9682,18 +9860,8 @@ def runcityPublic_typeMonitoring():
 
     # In[1384]:
 
-    qita_result_city_point = (
-        DF_SCDD[(DF_SCDD['station_category'] == '其他专用') & (DF_SCDD['operation_status'] == '投运')]
-        .assign(
-            total_charge_point_count=lambda df: df['dc_charge_point_count'].fillna(0) + df['ac_charge_point_count'].fillna(0)
-        )
-        .groupby('city')
-        .agg(
-            total_charge_point_count=('total_charge_point_count', 'sum'),
-            total_station_capacity=('station_capacity', 'sum'),
-            total_investment_amount=('investment_amount', 'sum')
-        )
-        .reset_index()
+    qita_result_city_point = build_nowpoint_city_base(
+        df_zdzb_qita, df_zdzb_qita_investment
     )
 
     # 营收
@@ -9706,7 +9874,7 @@ def runcityPublic_typeMonitoring():
         .round(2)
     )
 
-    qita_result_city_earn1 = pd.merge(qita_result_city_point, qita_result_city_earn, on='city', how='inner')
+    qita_result_city_earn1 = pd.merge(qita_result_city_point, qita_result_city_earn, on='city', how='left')
 
     qita_DF_cba_org_dataquyu = DF_org_data_pre_gun[
         (DF_org_data_pre_gun['cba_month'] == M) &
@@ -9722,7 +9890,7 @@ def runcityPublic_typeMonitoring():
         .round(2)
     )
 
-    qita_result_city_vloumes1 = pd.merge(qita_result_city_earn1, qita_result_city_vloumes, on='city', how='inner')
+    qita_result_city_vloumes1 = pd.merge(qita_result_city_earn1, qita_result_city_vloumes, on='city', how='left')
 
     qita_result_city_cba_pue = (
         DF_cba_pue[(DF_cba_pue['station_category'] == '其他专用') & (DF_cba_pue['cba_month'] == M)]
@@ -9733,14 +9901,19 @@ def runcityPublic_typeMonitoring():
         .round(2)
     )
 
-    qita_city_final_count = pd.merge(qita_result_city_vloumes1, qita_result_city_cba_pue, on='city', how='inner')
+    qita_city_investment_payback = build_nowpoint_city_payback(
+        DF, df_zdzb_qita_investment
+    )
+    qita_city_final_count = pd.merge(qita_result_city_vloumes1, qita_result_city_cba_pue, on='city', how='left')
+    qita_city_final_count = pd.merge(
+        qita_city_final_count, qita_city_investment_payback, on='city', how='left'
+    )
 
     qita_city_final_count = qita_city_final_count.fillna(0)
     qita_city_final_count = qita_city_final_count[qita_city_final_count['total_investment_amount'] != 0]
     cols = ['total_investment_amount', 'earn']
 
     qita_city_final_count[cols] = (qita_city_final_count[cols].astype(float) / 10000).round(2)
-    qita_city_final_count['payback'] = qita_city_final_count['earn'] / qita_city_final_count['total_investment_amount']
     qita_city_final_count
 
     # In[1385]:
@@ -9771,7 +9944,7 @@ def runcityPublic_typeMonitoring():
 
     qita_EQ_P = pd.merge(
         DF_operation_duration1,
-        DF_SCDD[(DF_SCDD['station_category'] == '其他专用') & (DF_SCDD['operation_status'] == '投运')],
+        DF_SCDD[(DF_SCDD['station_category'] == '其他专用') & (DF_SCDD['operation_status'].isin(['投运', '停运']))],
         on='station_no',
         how='inner'
     )
@@ -9980,19 +10153,8 @@ def runcityPublic_typeMonitoring():
     # In[1390]:
 
     # ========== 基础信息 ==========
-    result_station_point_v2g = (
-        df_v2g
-        .assign(
-            total_charge_point_count=lambda df: df['ac_charge_point_count'].fillna(0) + df['dc_charge_point_count'].fillna(0)
-        )
-        .groupby('station_no')
-        .agg(
-            station_name=('station_name', 'first'),
-            total_charge_point_count=('total_charge_point_count', 'sum'),
-            total_station_capacity=('station_capacity', 'sum'),
-            total_investment_amount=('investment_amount', 'sum')
-        )
-        .reset_index()
+    result_station_point_v2g = build_nowpoint_station_base(
+        df_v2g, df_v2g_investment
     )
     print("=== 基础信息 ===")
     print(result_station_point_v2g)
@@ -10001,13 +10163,11 @@ def runcityPublic_typeMonitoring():
     hbpercentage_v2g = (
         DF[['station_no', 'hbpercentage']]
         .fillna({'hbpercentage': 0})
-        .merge(
-            DF_SCDD[['station_no']],
-            on='station_no',
-            how='left'
-        )
     )
-    hbpercentage_v2g = hbpercentage_v2g[hbpercentage_v2g['station_no'].isin(v2g_no)][['station_no', 'hbpercentage']]
+    v2g_investment_no = df_v2g_investment['station_no']
+    hbpercentage_v2g = hbpercentage_v2g[
+        hbpercentage_v2g['station_no'].isin(v2g_investment_no)
+        ][['station_no', 'hbpercentage']]
     print("=== 回本率 ===")
     print(hbpercentage_v2g)
 
@@ -10181,18 +10341,8 @@ def runcityPublic_typeMonitoring():
     # In[1392]:
 
     # ========== 城市级：充电桩规模（基表） ==========
-    v2g_result_city_point = (
-        df_v2g
-        .assign(
-            total_charge_point_count=lambda df: df['dc_charge_point_count'].fillna(0) + df['ac_charge_point_count'].fillna(0)
-        )
-        .groupby('city')
-        .agg(
-            total_charge_point_count=('total_charge_point_count', 'sum'),
-            total_station_capacity=('station_capacity', 'sum'),
-            total_investment_amount=('investment_amount', 'sum')
-        )
-        .reset_index()
+    v2g_result_city_point = build_nowpoint_city_base(
+        df_v2g, df_v2g_investment
     )
 
     print("=== 城市级：基表 ===")
@@ -10246,7 +10396,8 @@ def runcityPublic_typeMonitoring():
         v2g_result_city_point,
         v2g_result_city_earn,
         v2g_result_city_vloumes,
-        v2g_result_city_cba_pue
+        v2g_result_city_cba_pue,
+        build_nowpoint_city_payback(DF, df_v2g_investment)
     ]
 
     from functools import reduce
@@ -10262,10 +10413,8 @@ def runcityPublic_typeMonitoring():
     cols = ['total_investment_amount', 'earn']
     v2g_city_final_count[cols] = (v2g_city_final_count[cols].astype(float) / 10000).round(2)
 
-    # 投资回收率
-    v2g_city_final_count['payback'] = (
-            v2g_city_final_count['earn'] / v2g_city_final_count['total_investment_amount']
-    ).round(4)
+    # 投资回收率已按投资三状态口径汇总。
+    v2g_city_final_count['payback'] = v2g_city_final_count['payback'].round(4)
     v2g_city_final_count = v2g_city_final_count.fillna(0)
 
     # 再把 inf / -inf 替换成 0
@@ -10592,7 +10741,8 @@ def runcityPublic_typeMonitoring():
     # In[1405]:
 
     DF_cba_org_data_cur_new = DF_cba_org_data_cur[
-        DF_cba_org_data_cur['cba_month'].astype(str).str[:4] == str(year)
+        (DF_cba_org_data_cur['cba_month'].astype(str).str[:4] == str(year))
+        & (DF_cba_org_data_cur['cba_month'].astype(str) <= M)
         ].copy()
 
     # In[1406]:
@@ -10651,7 +10801,10 @@ def runcityPublic_typeMonitoring():
 
     # In[1418]:
 
-    DF_success_cur = DF_success[DF_success['month'].astype(str).str[:4] == str(year)]
+    DF_success_cur = DF_success[
+        (DF_success['month'].astype(str).str[:4] == str(year))
+        & (DF_success['month'].astype(str) <= M)
+    ]
 
     # In[1419]:
 
@@ -10665,7 +10818,10 @@ def runcityPublic_typeMonitoring():
 
     # In[1421]:
 
-    DF_operation_duration_cur = DF_operation_duration[DF_operation_duration['month'].astype(str).str[:4] == str(year)]
+    DF_operation_duration_cur = DF_operation_duration[
+        (DF_operation_duration['month'].astype(str).str[:4] == str(year))
+        & (DF_operation_duration['month'].astype(str) <= M)
+    ]
 
     # In[1422]:
 
@@ -10697,7 +10853,13 @@ def runcityPublic_typeMonitoring():
 
     # In[1427]:
 
-    DF_SCGD_cur = DF_SCGD[DF_SCGD['stat_time'].astype(str).str[:4] == str(year)]
+    DF_SCGD_cur = DF_SCGD[
+        (DF_SCGD['stat_time'].astype(str).str[:4] == str(year))
+        & (
+            DF_SCGD['stat_time'].astype(str)
+            .str.replace(r'[^0-9]', '', regex=True).str[:6] <= M
+        )
+    ]
 
     # In[1428]:
 
@@ -10717,127 +10879,92 @@ def runcityPublic_typeMonitoring():
 
     # ### 格式修改
 
-    # In[1432]:
-    t1 = str(last_year) + '%'
-    t2 = str(year) + '%'
-    sql = """
-        SELECT 
-          rm.merchant_name,
-          cs.*,
-          scod.plat_data_charging_volume,
-          scod.cba_month
-        FROM charging_station cs
-        LEFT JOIN rec_merchant rm 
-          ON cs.property_owner_merhant_id = rm.merchant_id
-        INNER JOIN station_cba_org_data scod 
-          ON cs.station_no = scod.station_no
-        WHERE 
-          rm.merchant_name = '国网电动汽车服务（四川）有限公司'
-          AND (scod.cba_month like '%s' or scod.cba_month like '%s')
-          and cs.operation_status in ('投运','退运')
-        """ % (t1, t2)
-    DF_cba_pue = SQL(sql)
-
-    DF_cba_pue['days'] = DF_cba_pue['cba_month'].apply(get_days_in_month)
-
-    DF_cba_pue['year'] = [i[:4] for i in DF_cba_pue['cba_month']]
-
-    DF_cba_pue = DF_cba_pue[
-        (DF_cba_pue['station_capacity'].notna()) &  # 剔除功率为空的异常值
-        (DF_cba_pue['station_capacity'] > 0) &  # 剔除功率为0的异常值
-        (DF_cba_pue['plat_data_charging_volume'].notna()) &  # 剔除为空的异常值
-        (DF_cba_pue['plat_data_charging_volume'] != 0)  # 剔除平台电量为0的异常值
-        ].copy()
-    print('筛选后：', DF_cba_pue.shape)
-
-    DF_cba_pue['pue'] = DF_cba_pue['plat_data_charging_volume'] / (DF_cba_pue['station_capacity'] * DF_cba_pue['days'] * 24) * 100
-
     # ### 本月数据
-    csgg_benyue_gonglvliyonglv = DF_cba_pue[(DF_cba_pue['cba_month'] == M) & (DF_cba_pue['station_category'] == '城市公共')]['pue'].mean()
+    csgg_benyue_gonglvliyonglv = mean_or_zero(DF_cba_pue[(DF_cba_pue['cba_month'] == M) & (DF_cba_pue['station_category'] == '城市公共')]['pue'])
     csgg_benyue_gonglvliyonglv = f"{csgg_benyue_gonglvliyonglv:.2f}"
     print('城市公共功率利用率本月数据：', csgg_benyue_gonglvliyonglv)
 
     # 2. 高速公共
-    gsgg_benyue_gonglvliyonglv = DF_cba_pue[(DF_cba_pue['cba_month'] == M) & (DF_cba_pue['station_category'] == '高速公共')]['pue'].mean()
+    gsgg_benyue_gonglvliyonglv = mean_or_zero(DF_cba_pue[(DF_cba_pue['cba_month'] == M) & (DF_cba_pue['station_category'] == '高速公共')]['pue'])
     gsgg_benyue_gonglvliyonglv = f"{gsgg_benyue_gonglvliyonglv:.2f}"
     print('高速公共功率利用率本月数据：', gsgg_benyue_gonglvliyonglv)
 
     # 3. 重卡专用
-    zkzy_benyue_gonglvliyonglv = DF_cba_pue[(DF_cba_pue['cba_month'] == M) & (DF_cba_pue['station_category'] == '重卡专用')]['pue'].mean()
+    zkzy_benyue_gonglvliyonglv = mean_or_zero(DF_cba_pue[(DF_cba_pue['cba_month'] == M) & (DF_cba_pue['station_category'] == '重卡专用')]['pue'])
     zkzy_benyue_gonglvliyonglv = f"{zkzy_benyue_gonglvliyonglv:.2f}"
     print('重卡专用功率利用率本月数据：', zkzy_benyue_gonglvliyonglv)
 
     # 4. 公交专用
-    gjzy_benyue_gonglvliyonglv = DF_cba_pue[(DF_cba_pue['cba_month'] == M) & (DF_cba_pue['station_category'] == '公交专用')]['pue'].mean()
+    gjzy_benyue_gonglvliyonglv = mean_or_zero(DF_cba_pue[(DF_cba_pue['cba_month'] == M) & (DF_cba_pue['station_category'] == '公交专用')]['pue'])
     gjzy_benyue_gonglvliyonglv = f"{gjzy_benyue_gonglvliyonglv:.2f}"
     print('公交专用功率利用率本月数据：', gjzy_benyue_gonglvliyonglv)
 
     # 5. 小区有序
-    xqyx_benyue_gonglvliyonglv = DF_cba_pue[(DF_cba_pue['cba_month'] == M) & (DF_cba_pue['station_category'] == '小区有序')]['pue'].mean()
+    xqyx_benyue_gonglvliyonglv = mean_or_zero(DF_cba_pue[(DF_cba_pue['cba_month'] == M) & (DF_cba_pue['station_category'] == '小区有序')]['pue'])
     xqyx_benyue_gonglvliyonglv = f"{xqyx_benyue_gonglvliyonglv:.2f}"
     print('小区有序功率利用率本月数据：', xqyx_benyue_gonglvliyonglv)
 
     # 6. 其他专用
-    qtzy_benyue_gonglvliyonglv = DF_cba_pue[(DF_cba_pue['cba_month'] == M) & (DF_cba_pue['station_category'] == '其他专用')]['pue'].mean()
+    qtzy_benyue_gonglvliyonglv = mean_or_zero(DF_cba_pue[(DF_cba_pue['cba_month'] == M) & (DF_cba_pue['station_category'] == '其他专用')]['pue'])
     qtzy_benyue_gonglvliyonglv = f"{qtzy_benyue_gonglvliyonglv:.2f}"
     print('其他专用功率利用率本月数据：', qtzy_benyue_gonglvliyonglv)
     # ### 同比增长
 
     # ### 本年数据
     # 1. 城市公共
-    city_public_this_year = DF_cba_pue[
+    city_public_this_year = mean_or_zero(DF_cba_pue[
         (DF_cba_pue['station_category'] == '城市公共') &
         (DF_cba_pue['cba_month'] <= M) &
         (DF_cba_pue['year'] == str(year))
-        ]['pue'].mean()
+        ]['pue'])
     city_public_pue = f"{city_public_this_year:.2f}"
     print('城市公共功率利用率本年数据', city_public_pue)
 
     # 2. 高速公共
-    highway_public_this_year = DF_cba_pue[
+    highway_public_this_year = mean_or_zero(DF_cba_pue[
         (DF_cba_pue['station_category'] == '高速公共') &
         (DF_cba_pue['cba_month'] <= M) &
         (DF_cba_pue['year'] == str(year))
-        ]['pue'].mean()
+        ]['pue'])
     highway_public_pue = f"{highway_public_this_year:.2f}"
     print('高速公共功率利用率本年数据', highway_public_pue)
 
     # 3. 重卡专用
-    heavy_truck_this_year = DF_cba_pue[
+    heavy_truck_this_year = mean_or_zero(DF_cba_pue[
         (DF_cba_pue['station_category'] == '重卡专用') &
         (DF_cba_pue['cba_month'] <= M) &
         (DF_cba_pue['year'] == str(year))
-        ]['pue'].mean()
+        ]['pue'])
     heavy_truck_pue = f"{heavy_truck_this_year:.2f}"
     print('重卡专用功率利用率本年数据', heavy_truck_pue)
 
     # 4. 公交专用
-    bus_this_year = DF_cba_pue[
+    bus_this_year = mean_or_zero(DF_cba_pue[
         (DF_cba_pue['station_category'] == '公交专用') &
         (DF_cba_pue['cba_month'] <= M) &
         (DF_cba_pue['year'] == str(year))
-        ]['pue'].mean()
+        ]['pue'])
     bus_pue = f"{bus_this_year:.2f}"
     print('公交专用功率利用率本年数据', bus_pue)
 
     # 5. 小区有序
-    residential_this_year = DF_cba_pue[
+    residential_this_year = mean_or_zero(DF_cba_pue[
         (DF_cba_pue['station_category'] == '小区有序') &
         (DF_cba_pue['cba_month'] <= M) &
         (DF_cba_pue['year'] == str(year))
-        ]['pue'].mean()
+        ]['pue'])
     residential_pue = f"{residential_this_year:.2f}"
     print('小区有序功率利用率本年数据', residential_pue)
 
     # 6. 其他专用
-    other_special_this_year = DF_cba_pue[
+    other_special_this_year = mean_or_zero(DF_cba_pue[
         (DF_cba_pue['station_category'] == '其他专用') &
         (DF_cba_pue['cba_month'] <= M) &
         (DF_cba_pue['year'] == str(year))
-        ]['pue'].mean()
+        ]['pue'])
     other_special_pue = f"{other_special_this_year:.2f}"
     print('其他专用功率利用率本年数据', other_special_pue)
-    pue_this_year_1 = DF_cba_pue[(DF_cba_pue['cba_month'] <= M) & (DF_cba_pue['year'] == str(year))]['pue'].mean()
+    pue_this_year_1 = mean_or_zero(DF_cba_pue[(DF_cba_pue['cba_month'] <= M) & (DF_cba_pue['year'] == str(year))]['pue'])
     pue_this_year = f"{pue_this_year_1:.2f}"
     print('功率利用率本年数据', pue_this_year)
 
@@ -10851,13 +10978,16 @@ def runcityPublic_typeMonitoring():
             charging_station cs
             LEFT JOIN rec_merchant rm ON cs.property_owner_merhant_id = rm.merchant_id
             where 
-            rm.merchant_name = '国网电动汽车服务（四川）有限公司'
-            and  cs.operation_status in ('投运','退运')) a
+            cs.merchant_nature = '电动公司'
+            and  cs.operation_status in ('投运','停运')) a
             left join 
             (select * from station_cba_org_data where cba_month like '%s' or  cba_month like '%s' ) b
             on a.station_no =b.station_no
             """ % (t1, t2)
     DF_org_data_pre_gun = SQL(sql)
+    DF_org_data_pre_gun = limit_month_data_to_report_month(
+        DF_org_data_pre_gun, 'cba_month'
+    )
 
     DF_org_data_pre_gun = DF_org_data_pre_gun.fillna(0)
     DF_org_data_pre_gun['charge_point_count'] = DF_org_data_pre_gun['dc_charge_point_count'].fillna(0) + DF_org_data_pre_gun[
@@ -10983,13 +11113,18 @@ def runcityPublic_typeMonitoring():
     t2 = str(year) + '%'
     sql = """
         select * from 
-        (select station_no,station_category from  charging_station) c
-        right join 
+        (select station_no,station_category from charging_station
+         where merchant_nature = '电动公司'
+           and operation_status in ('投运','停运')) c
+        inner join
         (select time,station_name,station_code,pile_status,normal_duration,operation_duration,city from dp_operation_duration
         where time like '%s' or time like '%s') d 
         on c.station_no = d.station_code
         """ % (t1, t2)
     DF_operation_duration = SQL(sql)
+    DF_operation_duration = limit_month_data_to_report_month(
+        DF_operation_duration, 'time'
+    )
 
     DF_operation_duration = DF_operation_duration.fillna(0)
 
@@ -11127,14 +11262,17 @@ def runcityPublic_typeMonitoring():
     charging_station cs
     LEFT JOIN rec_merchant rm ON cs.property_owner_merhant_id = rm.merchant_id
     where 
-    rm.merchant_name = '国网电动汽车服务（四川）有限公司'
-    and cs.operation_status in ('投运','退运')
+    cs.merchant_nature = '电动公司'
+    and cs.operation_status in ('投运','停运')
     ) a
     left join 
     (select * from station_cba_org_data where cba_month like '%s' or  cba_month like '%s' ) b
     on a.station_no =b.station_no
     """ % (t1, t2)
     DF_cba_org_data = SQL(sql)
+    DF_cba_org_data = limit_month_data_to_report_month(
+        DF_cba_org_data, 'cba_month'
+    )
     DF_cba_org_data = DF_cba_org_data.fillna(0)
     # 数据类型转换
     DF_cba_org_data['rec_data_elec_fee_revenue'] = DF_cba_org_data['rec_data_elec_fee_revenue'].astype(str).astype(float)
@@ -11164,6 +11302,9 @@ def runcityPublic_typeMonitoring():
     (stat_time like '%s' or stat_time like '%s') and maintenance_cost>0
     """ % (t1, t2)
     DF_maintenance = SQL(sql)
+    DF_maintenance = limit_month_data_to_report_month(
+        DF_maintenance, 'cba_month'
+    )
     # 运维费需要特殊处理，由万元变为元
     DF_maintenance['maintenance_cost'] = DF_maintenance['maintenance_cost'].astype('float') * 10000
     print(DF_maintenance.info())
@@ -11182,7 +11323,7 @@ def runcityPublic_typeMonitoring():
                rec_merchant rm ON rmr.merchant_id = rm.merchant_id \
                    LEFT JOIN \
                scdd_rec_rules sr ON rm.merchant_id = sr.merchant_id
-          where property_owner_merhant_id = 119
+          where merchant_nature = '电动公司'
             and JSON_UNQUOTE(JSON_EXTRACT(sr.profit_detail, '$.parkingFee')) IS NOT NULL \
      \
           """
@@ -11197,14 +11338,17 @@ def runcityPublic_typeMonitoring():
     charging_station cs
     LEFT JOIN rec_merchant rm ON cs.property_owner_merhant_id = rm.merchant_id
     where 
-    rm.merchant_name = '国网电动汽车服务（四川）有限公司'
-    and cs.operation_status in ('投运','退运')
+    cs.merchant_nature = '电动公司'
+    and cs.operation_status in ('投运','停运')
     ) a
     left join 
     (select * from fin_rec_result_detail where (rec_month like '%s' or  rec_month like '%s') and  merchant_id != 119 ) b
     on a.station_no =b.station_no
     """ % (t1, t2)
     fin_rec_result_detail = SQL(sql)
+    fin_rec_result_detail = limit_month_data_to_report_month(
+        fin_rec_result_detail, 'rec_month'
+    )
     fin_rec_result_detail['merchant_profit_amount'] = fin_rec_result_detail['merchant_profit_amount'].astype('float')
     print(fin_rec_result_detail.info())
 
@@ -12279,7 +12423,7 @@ def runcityPublic_typeMonitoring():
         },
         {
             "title": "本年功率利用率",
-            "value": "{:.2f}".format(float(qtzy_benyue_gonglvliyonglv)),
+            "value": "{:.2f}".format(float(other_special_pue)),
             "unit": "%",
             "prefix": ""
         },
@@ -12459,6 +12603,8 @@ def runcityPublic_typeMonitoring():
     dp_station_low_lat ds 
     left join charging_station cs
     on cs.station_no = ds.station_no
+    where cs.merchant_nature = '电动公司'
+      and cs.operation_status in ('投运','停运')
     """
     DF_lot_lat = SQL(sql)
 
@@ -12795,9 +12941,8 @@ def runcityPublic_typeMonitoring():
 
     # In[1490]:
 
-    scdd_csgg = DF_SCDD[
-        (DF_SCDD['station_category'] == '城市公共') &
-        (DF_SCDD['operation_status'] == '投运')
+    scdd_csgg = DF_SCDD_INVESTMENT[
+        DF_SCDD_INVESTMENT['station_category'] == '城市公共'
         ].copy()
     scdd_csgg_ztl = scdd_csgg['investment_amount'].sum()
     scdd_csgg_ztl = scdd_csgg_ztl / 10000
@@ -12947,9 +13092,8 @@ def runcityPublic_typeMonitoring():
 
     # In[1496]:
 
-    zkzy_scdd = DF_SCDD[
-        (DF_SCDD['station_category'] == '重卡专用') &
-        (DF_SCDD['operation_status'] == '投运')
+    zkzy_scdd = DF_SCDD_INVESTMENT[
+        DF_SCDD_INVESTMENT['station_category'] == '重卡专用'
         ].copy()
 
     zkzy_ztl = zkzy_scdd['investment_amount'].sum()
@@ -13097,9 +13241,8 @@ def runcityPublic_typeMonitoring():
 
     # In[1499]:
 
-    gjzy_scdd = DF_SCDD[
-        (DF_SCDD['station_category'] == '公交专用') &
-        (DF_SCDD['operation_status'] == '投运')
+    gjzy_scdd = DF_SCDD_INVESTMENT[
+        DF_SCDD_INVESTMENT['station_category'] == '公交专用'
         ].copy()
 
     gjzy_ztl = gjzy_scdd['investment_amount'].sum()
@@ -13250,9 +13393,8 @@ def runcityPublic_typeMonitoring():
 
     # In[1502]:
 
-    gsgg_scdd = DF_SCDD[
-        (DF_SCDD['station_category'] == '高速公共') &
-        (DF_SCDD['operation_status'] == '投运')
+    gsgg_scdd = DF_SCDD_INVESTMENT[
+        DF_SCDD_INVESTMENT['station_category'] == '高速公共'
         ].copy()
 
     gsgg_ztl = gsgg_scdd['investment_amount'].sum()
@@ -13400,9 +13542,8 @@ def runcityPublic_typeMonitoring():
 
     # In[1505]:
 
-    xqyx_scdd = DF_SCDD[
-        (DF_SCDD['station_category'] == '小区有序') &
-        (DF_SCDD['operation_status'] == '投运')
+    xqyx_scdd = DF_SCDD_INVESTMENT[
+        DF_SCDD_INVESTMENT['station_category'] == '小区有序'
         ].copy()
 
     xqyx_ztl = xqyx_scdd['investment_amount'].sum()
@@ -13548,9 +13689,8 @@ def runcityPublic_typeMonitoring():
 
     # In[1508]:
 
-    qtzy_scdd = DF_SCDD[
-        (DF_SCDD['station_category'] == '其他专用') &
-        (DF_SCDD['operation_status'] == '投运')
+    qtzy_scdd = DF_SCDD_INVESTMENT[
+        DF_SCDD_INVESTMENT['station_category'] == '其他专用'
         ].copy()
 
     qtzy_ztl = qtzy_scdd['investment_amount'].sum()
@@ -13691,13 +13831,13 @@ def runcityPublic_typeMonitoring():
 
     # In[1512]:
 
-    V2G_ztl = df_v2g['investment_amount'].sum()
+    V2G_ztl = df_v2g_investment['investment_amount'].sum()
     V2G_ztl = V2G_ztl / 10000
     V2G_ztl = round(float(V2G_ztl), 2)
     print("其他专用总投资（万元）：", V2G_ztl)
 
-    V2Gzy_2025 = df_v2g[
-        pd.to_datetime(df_v2g['commissioning_time']).dt.year == year
+    V2Gzy_2025 = df_v2g_investment[
+        pd.to_datetime(df_v2g_investment['commissioning_time']).dt.year == year
         ]
     V2Gzy_2025_tz = V2Gzy_2025['investment_amount'].sum()
     V2Gzy_2025_tz = V2Gzy_2025_tz / 10000

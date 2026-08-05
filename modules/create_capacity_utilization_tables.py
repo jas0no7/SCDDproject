@@ -12,11 +12,11 @@ logger = logging.getLogger(__name__)
 
 # MySQL配置
 DB_CONFIG = {
-    "host": "10.177.58.100",
+    "host": "192.168.0.217",
     "port": 1106,
     "user": "root",
     "password": "edac123456",
-    "database": "scdd_db",
+    "database": "scdd_db_v2",
     "charset": "utf8mb4",
 }
 
@@ -43,8 +43,8 @@ CREATE TABLE IF NOT EXISTS `dp_pue_capacity_utilization` (
     `station_type` VARCHAR(50) NOT NULL COMMENT '站类型',
     `total_operating_hours` DECIMAL(14, 2) NOT NULL COMMENT '运行总时长(小时)',
     `total_charging_hours` DECIMAL(14, 2) NULL COMMENT '充电总时长(小时)',
-    `time_utilization_rate` DECIMAL(9, 6) NULL COMMENT '时长利用率',
-    `capacity_utilization_rate` DECIMAL(9, 6) NULL COMMENT '容量利用率',
+    `time_utilization_rate` DECIMAL(9, 6) NULL COMMENT '时长利用率(%)',
+    `capacity_utilization_rate` DECIMAL(9, 6) NULL COMMENT '容量利用率(%)',
     `total_capacity_kwh` DECIMAL(18, 3) NOT NULL COMMENT '总容量(千瓦时)',
     `total_charging_energy_kwh` DECIMAL(18, 3) NULL COMMENT '总充电量(千瓦时)',
     `data_category` VARCHAR(50) NOT NULL COMMENT '来源分类',
@@ -57,17 +57,9 @@ CREATE TABLE IF NOT EXISTS `dp_pue_capacity_utilization` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
   COMMENT='容量利用率-定期维护';
 """
-CREATE_target_progress_SQL = """
-CREATE TABLE IF NOT EXISTS dp_target_progress (
-    id INT PRIMARY KEY AUTO_INCREMENT COMMENT '主键ID',
-    annual_target DECIMAL(15, 2) COMMENT '年度目标',
-    year_to_date_completed DECIMAL(15, 2) COMMENT '本年累计已完成',
-    completion_rate DECIMAL(5, 2) COMMENT '当前完成率'
-) COMMENT = '年度计划完成率';
-"""
+
 
 CREATE_TABLE_SQLS = [
-    CREATE_target_progress_SQL,
     CREATE_CAPACITY_UTILIZATION_SQL,
 ]
 
