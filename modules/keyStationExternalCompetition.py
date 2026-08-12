@@ -1,7 +1,6 @@
 from logs.log_decorator import log_execution
 from loguru import logger
-from modules.config import SQL,import_data_with_cursor,Statistical_Time
-
+from modules.config import SQL, import_data_with_cursor, Statistical_Time
 
 
 @log_execution
@@ -16,7 +15,6 @@ def runkeyStationExternalCompetition():
     P_M = P_M[:4] + '-' + P_M[4:]
     print(M, previous_month_str, year, last_year, last_year_month_str, P_M)
 
-
     def get_days_in_month(year_month):
         """
         获取指定年月的天数
@@ -30,9 +28,6 @@ def runkeyStationExternalCompetition():
         year = int(year_month[:4])
         month = int(year_month[4:6])
         return calendar.monthrange(year, month)[1]
-
-
-
 
     def generate_months(start_month, num_months):
         """
@@ -49,7 +44,7 @@ def runkeyStationExternalCompetition():
         start_date = pd.to_datetime(start_month, format='%Y%m')
 
         # 生成往前推指定月数的日期列表
-        date_list = [start_date - i* MonthBegin(1) for i in range(num_months + 1)]  # 包含起始月份
+        date_list = [start_date - i * MonthBegin(1) for i in range(num_months + 1)]  # 包含起始月份
 
         # 格式化日期为 'YYYYMM' 格式
         month_list = [date.strftime('%Y%m') for date in date_list]
@@ -59,7 +54,6 @@ def runkeyStationExternalCompetition():
 
         return df
 
-
     Data = generate_months(M, 11)
 
     Data
@@ -68,11 +62,9 @@ def runkeyStationExternalCompetition():
 
     # In[236]:
 
-
     M
 
     # In[237]:
-
 
     sql = f"""
     SELECT
@@ -84,16 +76,13 @@ def runkeyStationExternalCompetition():
 
     # In[238]:
 
-
     DF_out1 = DF_out[DF_out['date'] == M].copy()
 
     # In[239]:
 
-
     DF_out1.columns
 
     # In[240]:
-
 
     sql = """
     SELECT
@@ -105,16 +94,13 @@ def runkeyStationExternalCompetition():
 
     # In[241]:
 
-
     DF_number.columns
 
     # In[242]:
 
-
     import_id = DF_number['dd_station_id'].unique()
 
     # In[243]:
-
 
     DF_im_out = DF_number.merge(
         DF_out1[
@@ -131,23 +117,22 @@ def runkeyStationExternalCompetition():
 
     # In[244]:
 
-
     DF_im_out
 
     # ### 单枪日均充电量
 
     # In[245]:
 
-
     sql = """
     select * from 
     (SELECT 
     cs.*
     FROM
-    charging_station cs
+        charging_station cs
     LEFT JOIN rec_merchant rm ON cs.property_owner_merhant_id = rm.merchant_id
     where 
-    cs.operation_status in ('投运','退运')) a
+    cs.merchant_nature = '电动公司'
+    and cs.operation_status in ('投运','停运')) a
     left join 
     (select * from station_cba_org_data  ) b
     on a.station_no =b.station_no
@@ -156,37 +141,33 @@ def runkeyStationExternalCompetition():
 
     # In[246]:
 
-
     DF_cba_org_data = DF_cba_org_data.loc[:, ~DF_cba_org_data.columns.duplicated()]
     mask = DF_cba_org_data['station_no'].astype(str).isin([str(x) for x in import_id])
     DF_cba_org_data = DF_cba_org_data[mask]
 
     # In[247]:
 
-
     DF_cba_org_data = DF_cba_org_data[DF_cba_org_data['station_no'].isin(import_id)]
 
     # In[248]:
 
-
-    DF_cba_org_data['total_charge_point_count'] = DF_cba_org_data['dc_charge_point_count'].fillna(0) + DF_cba_org_data['ac_charge_point_count'].fillna(0)
+    DF_cba_org_data['total_charge_point_count'] = DF_cba_org_data['dc_charge_point_count'].fillna(0) + DF_cba_org_data[
+        'ac_charge_point_count'].fillna(0)
 
     # In[249]:
 
-
-    DF_cba_org_data = DF_cba_org_data[(DF_cba_org_data['total_charge_point_count'] != 0) & (DF_cba_org_data['operation_status'] == '投运')]
+    DF_cba_org_data = DF_cba_org_data[
+        (DF_cba_org_data['total_charge_point_count'] != 0) &
+        (DF_cba_org_data['operation_status'].isin(['投运', '停运']))]
     DF_cba_org_data = DF_cba_org_data[DF_cba_org_data['plat_data_charging_volume'] != 0]
 
     # In[250]:
-
 
     DF_cba_org_data['days'] = DF_cba_org_data['cba_month'].apply(get_days_in_month)
 
     # In[ ]:
 
-
     # In[251]:
-
 
     cols_to_convert = ['plat_data_charging_volume', 'charge_point_count', 'days']
 
@@ -202,68 +183,60 @@ def runkeyStationExternalCompetition():
 
     # In[252]:
 
-
     DF_cba_org_data[['plat_data_charging_volume', 'total_charge_point_count', 'days', 'charging_quantity_per_gun']]
 
     # ### 功率利用率
 
     # In[253]:
 
-
     # 功率利用率
 
     sql = """
-    SELECT 
-      rm.merchant_name,
-      cs.*,
-      scod.plat_data_charging_volume,
-      scod.cba_month
-    FROM charging_station cs
-    LEFT JOIN rec_merchant rm 
-      ON cs.property_owner_merhant_id = rm.merchant_id
-    INNER JOIN station_cba_org_data scod 
-      ON cs.station_no = scod.station_no
-    WHERE 
-      rm.merchant_name = '国网电动汽车服务（四川）有限公司'
-      and cs.operation_status = '投运'
+    SELECT
+      pue.*,
+      cs.station_category
+    FROM dp_pue_capacity_utilization pue
+    LEFT JOIN charging_station cs
+      ON pue.station_code COLLATE utf8mb4_unicode_ci
+      = cs.station_no COLLATE utf8mb4_unicode_ci
+    WHERE pue.data_category = '四川电动'
+      AND cs.merchant_nature = '电动公司'
+      AND cs.operation_status IN ('投运','停运')
     """
     DF_cba_pue = SQL(sql)
 
-    # In[254]:
+    # 将新表字段映射为现有下游合并所使用的字段名；功率利用率直接取库中值，不再计算。
+    DF_cba_pue = DF_cba_pue.rename(columns={
+        'station_code': 'station_no',
+        'month': 'cba_month',
+        'capacity_utilization_rate': 'power_rate'
+    })
 
+    # In[254]:
 
     DF_cba_pue = DF_cba_pue[DF_cba_pue['station_no'].isin(import_id)]
 
     # In[255]:
 
-
-    DF_cba_pue['days'] = DF_cba_pue['cba_month'].apply(get_days_in_month)
-    DF_cba_pue = DF_cba_pue[
-        (DF_cba_pue['station_capacity'].notna()) &
-        (DF_cba_pue['station_capacity'] > 0) &
-        (DF_cba_pue['plat_data_charging_volume'].notna())
-        ]
-
-    DF_cba_pue['power_rate'] = (DF_cba_pue['plat_data_charging_volume'] /
-                                (DF_cba_pue['station_capacity'] * DF_cba_pue['days'] * 24))
-
     # In[ ]:
-
 
     # ### 站点额定功率
 
     # In[256]:
 
-
     sql = """
-    select station_no,station_name,station_capacity as equip_power,
-    (dc_charge_point_count + ac_charge_point_count) as charging_num
-    from charging_station
+    SELECT
+      station_no,
+      station_name,
+      station_capacity AS equip_power,
+      (dc_charge_point_count + ac_charge_point_count) AS charging_num
+    FROM charging_station
+    WHERE merchant_nature = '电动公司'
+      AND operation_status IN ('投运','停运')
     """
     DF_basic = SQL(sql)
 
     # In[257]:
-
 
     DF_basic = DF_basic[DF_basic['station_no'].isin(import_id)]
 
@@ -271,35 +244,36 @@ def runkeyStationExternalCompetition():
 
     # In[258]:
 
-
     sql = f"""
     SELECT
-        station_no,
-        cba_month,
+        scod.station_no,
+        scod.cba_month,
         CASE
-            WHEN SUM(plat_data_charging_volume) = 0 THEN NULL
-            ELSE ROUND(SUM(plat_data_service_revenue) / SUM(plat_data_charging_volume), 4)
+            WHEN SUM(scod.plat_data_charging_volume) = 0 THEN NULL
+            ELSE ROUND(SUM(scod.plat_data_service_revenue) / SUM(scod.plat_data_charging_volume), 4)
         END AS service_fee,
-        SUM(plat_data_charging_volume) AS electricity_quantity,
-        SUM(plat_data_elec_fee_revenue) AS total_elec_fee_revenue,
+        SUM(scod.plat_data_charging_volume) AS electricity_quantity,
+        SUM(scod.plat_data_elec_fee_revenue) AS total_elec_fee_revenue,
         CASE
-            WHEN SUM(plat_data_charging_volume) = 0 THEN NULL
-            ELSE ROUND(SUM(plat_data_elec_fee_revenue) / SUM(plat_data_charging_volume), 4)
+            WHEN SUM(scod.plat_data_charging_volume) = 0 THEN NULL
+            ELSE ROUND(SUM(scod.plat_data_elec_fee_revenue) / SUM(scod.plat_data_charging_volume), 4)
         END AS electricity_fee
-    FROM station_cba_org_data
-    GROUP BY station_no, cba_month
-    
+    FROM station_cba_org_data scod
+    INNER JOIN charging_station cs
+      ON scod.station_no = cs.station_no
+    WHERE cs.merchant_nature = '电动公司'
+      AND cs.operation_status IN ('投运','退运','停运')
+    GROUP BY scod.station_no, scod.cba_month
+
     ORDER BY station_no, cba_month;
     """
     DF_ele = SQL(sql)
 
     # In[259]:
 
-
     DF_ele = DF_ele[DF_ele['station_no'].isin(import_id)]
 
     # In[260]:
-
 
     # 删除重复列（保留第一个出现的）
     DF_cba_org_data = DF_cba_org_data.loc[:, ~DF_cba_org_data.columns.duplicated()]
@@ -319,27 +293,22 @@ def runkeyStationExternalCompetition():
 
     # In[261]:
 
-
     DF_imp1 = DF_imp[DF_imp['cba_month'] == M]
 
     # In[262]:
 
-
     DF_imp1.columns
 
     # In[263]:
-
 
     DF_imp1 = DF_imp1[['station_no', 'station_name', 'charging_quantity_per_gun',
                        'power_rate', 'electricity_fee', 'electricity_quantity', 'service_fee']]
 
     # In[264]:
 
-
     DF_basic
 
     # In[265]:
-
 
     DF_imp1 = DF_imp1.merge(
         DF_basic,
@@ -351,9 +320,7 @@ def runkeyStationExternalCompetition():
 
     # In[266]:
 
-
     import pandas as pd
-
 
     def add_self_row_ignore_distance(df: pd.DataFrame) -> pd.DataFrame:
         """
@@ -372,7 +339,7 @@ def runkeyStationExternalCompetition():
         self_rows['dd_station_name'] = base['dd_station_name']
         self_rows['sjg_station_id'] = base['dd_station_id']
         self_rows['sjg_station_name'] = base['dd_station_name']
-      #  self_rows['station_category'] = base['station_category']
+        #  self_rows['station_category'] = base['station_category']
 
         # 合并原数据和补充的“自己 vs 自己”数据
         out = pd.concat([self_rows, df], ignore_index=True)
@@ -381,28 +348,23 @@ def runkeyStationExternalCompetition():
         out['_is_self'] = (out['dd_station_id'] == out['sjg_station_id']).astype(int)
         out = (
             out.sort_values(['dd_station_id', '_is_self'], ascending=[True, False])
-                .drop(columns=['_is_self'])
-                .reset_index(drop=True)
+            .drop(columns=['_is_self'])
+            .reset_index(drop=True)
         )
 
         return out
 
-
     # In[267]:
-
 
     result_df = add_self_row_ignore_distance(DF_im_out)
 
     # In[ ]:
 
-
     # In[268]:
-
 
     result_df
 
     # In[269]:
-
 
     # --- 1) 规范 DF_tmp，并建双键索引 ---
     # 注意这里要对齐正确的列名
@@ -416,7 +378,7 @@ def runkeyStationExternalCompetition():
     # 若 (id,name) 有重复，保留最后一条或你需要的聚合规则
     tmp = (
         tmp.drop_duplicates(['sjg_station_id', 'sjg_station_name'], keep='last')
-            .set_index(['sjg_station_id', 'sjg_station_name'])
+        .set_index(['sjg_station_id', 'sjg_station_name'])
         [['equip_power', 'charging_num', 'charging_quantity_per_gun',
           'power_rate', 'electricity_fee', 'electricity_quantity', 'service_fee']]
     )
@@ -440,16 +402,13 @@ def runkeyStationExternalCompetition():
 
     # In[270]:
 
-
     state_competitiveSituation = result_df.copy()
 
     # In[271]:
 
-
     state_competitiveSituation = state_competitiveSituation.fillna(0)
 
     # In[272]:
-
 
     # 专门对 id 字段做字符串化，保证不丢失
     state_competitiveSituation['dd_station_id'] = state_competitiveSituation['dd_station_id'].astype(str).str.strip()
@@ -459,11 +418,9 @@ def runkeyStationExternalCompetition():
 
     # In[273]:
 
-
-    state_competitiveSituation['power_rate'] = state_competitiveSituation['power_rate'] * 100
+    # capacity_utilization_rate 已按百分比存储，直接作为功率利用率使用。
 
     # In[274]:
-
 
     # 假设你的 DataFrame 是 state_competitiveSituation1
     df = state_competitiveSituation.copy()
@@ -491,9 +448,10 @@ def runkeyStationExternalCompetition():
             row_dict = {}
             for old_key, new_key in field_mapping.items():
                 value = getattr(row, old_key)
-                # 对数值类型保留两位小数
-                if isinstance(value, (float, int)):
-                    value = round(value, 2)
+                # 对数值类型保留两位小数，并转为 float 避免 Decimal 序列化报错
+                from decimal import Decimal
+                if isinstance(value, (float, int, Decimal)):
+                    value = float(round(value, 2))
                 row_dict[new_key] = value
             # 内层 siteNum 用竞争站站点编号
             row_dict['siteNum'] = getattr(row, 'sjg_station_id')
@@ -507,12 +465,9 @@ def runkeyStationExternalCompetition():
 
     # In[275]:
 
-
     # data_competitiveSituation
 
-
     # In[276]:
-
 
     rows = []
 
@@ -521,7 +476,7 @@ def runkeyStationExternalCompetition():
         table_data = block.get("tableData") or []
         for item in table_data:
             # 将单个竞争站对象压成 JSON 字符串（不带多余空格）
-            tableData_str = json.dumps(item, ensure_ascii=False, separators=(',', ':'))
+            tableData_str = json.dumps(item, ensure_ascii=False, separators=(',', ':'), default=float)
             rows.append({
                 "siteNum": dd_id,
                 "tableData": tableData_str
@@ -532,14 +487,11 @@ def runkeyStationExternalCompetition():
 
     # 展示前几行看看结构
 
-
     # In[277]:
-
 
     data_competitiveSituation2['month'] = M
 
     # In[278]:
-
 
     # 删除现有的NULL id列（如果存在）
     if 'id' in data_competitiveSituation2.columns:
@@ -552,14 +504,11 @@ def runkeyStationExternalCompetition():
     # data_competitiveSituation2 = data_competitiveSituation2.reset_index().rename(columns={'index': 'id'})
     # data_competitiveSituation2['id'] = data_competitiveSituation2['id'] + 1
 
-
     # In[279]:
-
 
     data_competitiveSituation2
 
     # In[280]:
-
 
     # # 表和字段注释
     # table_comment = "重点站点_外部竞争力_竞争现状"
@@ -582,9 +531,7 @@ def runkeyStationExternalCompetition():
     #     update_columns=True
     # )
 
-
     # In[281]:
-
 
     table_comment = "重点站点_外部竞争力_竞争现状"
     column_comments = {
@@ -606,35 +553,38 @@ def runkeyStationExternalCompetition():
 
     # In[282]:
 
-
     state_competitiveSituation.columns
 
     # In[283]:
 
-
-    competitorStationCompareDimensions = state_competitiveSituation[['dd_station_id', 'dd_station_name', 'sjg_station_id',
-                                                                     'sjg_station_name', 'equip_power', 'electricity_fee', 'electricity_quantity', 'charging_quantity_per_gun', 'power_rate', 'service_fee']].copy()
+    competitorStationCompareDimensions = state_competitiveSituation[
+        ['dd_station_id', 'dd_station_name', 'sjg_station_id',
+         'sjg_station_name', 'equip_power', 'electricity_fee', 'electricity_quantity', 'charging_quantity_per_gun',
+         'power_rate', 'service_fee']].copy()
 
     # In[284]:
 
-
-    #competitorStationCompareDimensions['power_rate'] = competitorStationCompareDimensions['power_rate'] * 100
+    # competitorStationCompareDimensions['power_rate'] = competitorStationCompareDimensions['power_rate'] * 100
 
     # In[285]:
-
 
     competitorStationCompareDimensions['power_rate'] = competitorStationCompareDimensions['power_rate'].round(2)
 
     # In[286]:
 
-
-    competitorStationCompareDimensions['charging_quantity_per_gun'] = competitorStationCompareDimensions['charging_quantity_per_gun'].round(2)
+    competitorStationCompareDimensions['charging_quantity_per_gun'] = competitorStationCompareDimensions[
+        'charging_quantity_per_gun'].round(2)
 
     # In[287]:
 
+    # 转为 float，避免 Decimal 类型参与运算报错
+    for col in ['power_rate', 'electricity_fee', 'service_fee', 'charging_quantity_per_gun', 'electricity_quantity', 'equip_power']:
+        if col in competitorStationCompareDimensions.columns:
+            competitorStationCompareDimensions[col] = competitorStationCompareDimensions[col].astype(float)
 
     # 按重点站分组计算功率效能比，并直接在原 DF 中新增列
-    competitorStationCompareDimensions['power_efficiency_ratio'] = competitorStationCompareDimensions.groupby('dd_station_id')['power_rate'].transform(
+    competitorStationCompareDimensions['power_efficiency_ratio'] = \
+    competitorStationCompareDimensions.groupby('dd_station_id')['power_rate'].transform(
         lambda x: (x - x.mean()) / (x.max() - x.mean())
     )
 
@@ -643,16 +593,14 @@ def runkeyStationExternalCompetition():
 
     # In[288]:
 
-
     competitorStationCompareDimensions = competitorStationCompareDimensions.fillna(0)
 
     # In[289]:
 
-
-    competitorStationCompareDimensions['fee_total'] = competitorStationCompareDimensions['service_fee'] + competitorStationCompareDimensions['electricity_fee']
+    competitorStationCompareDimensions['fee_total'] = competitorStationCompareDimensions['service_fee'] + \
+                                                      competitorStationCompareDimensions['electricity_fee']
 
     # In[290]:
-
 
     # ✅ 指标映射和单位映射（保持不变）
     indicator_map = {
@@ -719,7 +667,8 @@ def runkeyStationExternalCompetition():
             sorted_axis_data_all = [x[0] for x in combined_all]
             sorted_chart_data_all = [x[1] for x in combined_all]
 
-            xAxis_avg_all = round(sum(sorted_chart_data_all) / len(sorted_chart_data_all), 2) if sorted_chart_data_all else 0
+            xAxis_avg_all = round(sum(sorted_chart_data_all) / len(sorted_chart_data_all),
+                                  2) if sorted_chart_data_all else 0
 
             # ✅ 添加“全部”记录（只一条）
             data_entries.append({
@@ -765,26 +714,23 @@ def runkeyStationExternalCompetition():
 
     # In[291]:
 
-
     rows = []
 
     for item in data_competitorStationCompareDimensions:
         rows.append({
             "siteNum": item["siteNum"],
-            "siteOptions": json.dumps(item["siteOptions"], ensure_ascii=False),
-            "indicatorOptions": json.dumps(item["indicatorOptions"], ensure_ascii=False),
-            "barChartData": json.dumps(item["barChartData"], ensure_ascii=False)
+            "siteOptions": json.dumps(item["siteOptions"], ensure_ascii=False, default=float),
+            "indicatorOptions": json.dumps(item["indicatorOptions"], ensure_ascii=False, default=float),
+            "barChartData": json.dumps(item["barChartData"], ensure_ascii=False, default=float)
         })
 
     data_competitorStationCompareDimensions2 = pd.DataFrame(rows)
 
     # In[292]:
 
-
     data_competitorStationCompareDimensions2['month'] = M
 
     # In[293]:
-
 
     if 'id' in data_competitorStationCompareDimensions2.columns:
         data_competitorStationCompareDimensions2 = data_competitorStationCompareDimensions2.drop('id', axis=1)
@@ -794,11 +740,9 @@ def runkeyStationExternalCompetition():
 
     # In[294]:
 
-
     data_competitorStationCompareDimensions2[data_competitorStationCompareDimensions2['siteNum'] == '202110111714307']
 
     # In[295]:
-
 
     # # 表和字段注释
     # table_comment = "重点站点_外部竞争力_竞争站点比较维度"
@@ -821,9 +765,7 @@ def runkeyStationExternalCompetition():
     #     update_columns=True
     # )
 
-
     # In[296]:
-
 
     table_comment = "重点站点_外部竞争力_竞争站点比较维度"
 
@@ -847,17 +789,14 @@ def runkeyStationExternalCompetition():
 
     # In[297]:
 
-
     DF_out2 = DF_out[['date', 'station_id', 'station_name', 'electricity_quantity']].copy()
 
     # In[298]:
-
 
     DF_out2['station_id'] = DF_out2['station_id'].astype(str).str.strip()
     DF_number['sjg_station_id'] = DF_number['sjg_station_id'].astype(str).str.strip()
 
     # In[299]:
-
 
     DF_charge = DF_number.merge(
         DF_out2[['date', 'station_id', 'station_name', 'electricity_quantity']],
@@ -868,18 +807,14 @@ def runkeyStationExternalCompetition():
 
     # In[300]:
 
-
     DF_charge = DF_charge[['dd_station_id', 'dd_station_name', 'sjg_station_id',
                            'sjg_station_name', 'date', 'electricity_quantity']]
 
     # In[301]:
 
-
     DF_charge
 
-
     # In[302]:
-
 
     def add_self_row_empty_quantity(df: pd.DataFrame) -> pd.DataFrame:
         """
@@ -910,20 +845,17 @@ def runkeyStationExternalCompetition():
         out['_is_self'] = (out['dd_station_id'] == out['sjg_station_id']).astype(int)
         out = (
             out.sort_values(['dd_station_id', 'date', '_is_self'], ascending=[True, True, False])
-                .drop(columns=['_is_self'])
-                .reset_index(drop=True)
+            .drop(columns=['_is_self'])
+            .reset_index(drop=True)
         )
 
         return out
 
-
     # In[303]:
-
 
     DF_charge_full = add_self_row_empty_quantity(DF_charge)
 
     # In[304]:
-
 
     DF_charge_full.loc[
         DF_charge_full['dd_station_id'] == DF_charge_full['sjg_station_id'],
@@ -932,16 +864,13 @@ def runkeyStationExternalCompetition():
 
     # In[305]:
 
-
     DF_imp2 = DF_imp[['station_no', 'cba_month', 'station_name', 'electricity_quantity']]
 
     # In[306]:
 
-
     print(f"DF_charge_full的列明：{DF_charge_full.columns},DF_imp2的列明：{DF_imp2.columns}")
 
     # In[307]:
-
 
     # --- 1) 构造对照表，作为“自己 vs 自己”的电量来源 ---
     tmp = DF_imp2.rename(columns={
@@ -958,7 +887,7 @@ def runkeyStationExternalCompetition():
     # 建立多键索引
     tmp = (
         tmp.drop_duplicates(['sjg_station_id', 'sjg_station_name', 'date'], keep='last')
-            .set_index(['sjg_station_id', 'sjg_station_name', 'date'])
+        .set_index(['sjg_station_id', 'sjg_station_name', 'date'])
         [['electricity_quantity']]
     )
 
@@ -980,16 +909,13 @@ def runkeyStationExternalCompetition():
 
     # In[308]:
 
-
     chargeCompare1
 
     # In[309]:
 
-
     chargeCompare1
 
     # In[310]:
-
 
     charge_compare_df = chargeCompare1.copy()
     result_list = []
@@ -1070,25 +996,22 @@ def runkeyStationExternalCompetition():
 
     # In[311]:
 
-
     flat_rows = []
 
     for item in final_json["data"]:
         flat_rows.append({
             "siteNum": item.get("siteNum"),
-            "indicatorOptions": json.dumps(item.get("indicatorOptions", []), ensure_ascii=False),
-            "lineChartData": json.dumps(item.get("lineChartData", []), ensure_ascii=False)  # 不展开
+            "indicatorOptions": json.dumps(item.get("indicatorOptions", []), ensure_ascii=False, default=float),
+            "lineChartData": json.dumps(item.get("lineChartData", []), ensure_ascii=False, default=float)  # 不展开
         })
 
     final_json2 = pd.DataFrame(flat_rows)
 
     # In[312]:
 
-
     final_json2['month'] = M
 
     # In[313]:
-
 
     # 删除现有的NULL id列（如果存在）
     if 'id' in final_json2.columns:
@@ -1099,11 +1022,9 @@ def runkeyStationExternalCompetition():
 
     # In[314]:
 
-
     final_json2
 
     # In[315]:
-
 
     # # 表和字段注释
     # table_comment = "重点站点_外部竞争力_竞争站点充电量对比"
@@ -1124,9 +1045,7 @@ def runkeyStationExternalCompetition():
     #     column_comments=column_comments
     # )
 
-
     # In[316]:
-
 
     table_comment = "重点站点_外部竞争力_竞争站点充电量对比"
 
@@ -1145,11 +1064,9 @@ def runkeyStationExternalCompetition():
         column_comments=column_comments
     )
 
-
     # ### 竞争画像
 
     # In[317]:
-
 
     def topsis_by_group(df, group_col, label_col, indicator_cols, weights):
         from sklearn.preprocessing import MinMaxScaler
@@ -1195,14 +1112,12 @@ def runkeyStationExternalCompetition():
 
         return pd.concat(results, ignore_index=True)
 
-
     # In[318]:
-
 
     competitorStationCompareDimensions['fee_total_benefit'] = (
         competitorStationCompareDimensions
-            .groupby('dd_station_id')['fee_total']
-            .transform(lambda s: s.max() - s)
+        .groupby('dd_station_id')['fee_total']
+        .transform(lambda s: s.max() - s)
     )
 
     # 指标列与权重
@@ -1220,22 +1135,20 @@ def runkeyStationExternalCompetition():
 
     # In[319]:
 
-
     competitive_portrait = competitive_portrait.fillna(0)
 
     # In[320]:
-
 
     competitive_portrait.columns
 
     # In[321]:
 
     competitive_portrait = competitive_portrait[['dd_station_id', 'dd_station_name', 'sjg_station_id',
-                                                 'sjg_station_name', 'charging_quantity_per_gun', 'power_rate', 'fee_total',
+                                                 'sjg_station_name', 'charging_quantity_per_gun', 'power_rate',
+                                                 'fee_total',
                                                  '综合得分(调整)', '排名']]
 
     # In[322]:
-
 
     competitive_portrait
 
@@ -1331,7 +1244,6 @@ def runkeyStationExternalCompetition():
 
     # In[325]:
 
-
     import pandas as pd
     import json
 
@@ -1341,20 +1253,18 @@ def runkeyStationExternalCompetition():
     for item in data_competitive_portrait:
         rows.append({
             "siteNum": item["siteNum"],
-            "radarData": json.dumps(item["radarData"], ensure_ascii=False),
-            "indicator": json.dumps(item["indicator"], ensure_ascii=False),
-            "illustrate": json.dumps(item["illustrate"], ensure_ascii=False),
+            "radarData": json.dumps(item["radarData"], ensure_ascii=False, default=float),
+            "indicator": json.dumps(item["indicator"], ensure_ascii=False, default=float),
+            "illustrate": json.dumps(item["illustrate"], ensure_ascii=False, default=float),
         })
 
     data_competitive_portrait2 = pd.DataFrame(rows)
 
     # In[326]:
 
-
     data_competitive_portrait2['month'] = M
 
     # In[327]:
-
 
     # 删除现有的NULL id列（如果存在）
     if 'id' in data_competitive_portrait2.columns:
@@ -1365,11 +1275,9 @@ def runkeyStationExternalCompetition():
 
     # In[328]:
 
-
     data_competitive_portrait2
 
     # In[329]:
-
 
     # # 表和字段注释
     # table_comment = "重点站点_外部竞争力_竞争画像"
@@ -1390,9 +1298,7 @@ def runkeyStationExternalCompetition():
     #     column_comments=column_comments
     # )
 
-
     # In[330]:
-
 
     table_comment = "重点站点_外部竞争力_竞争画像"
 
@@ -1416,12 +1322,9 @@ def runkeyStationExternalCompetition():
 
     # In[ ]:
 
-
     # In[ ]:
 
-
     # In[331]:
-
 
     competitive_score = []
 
@@ -1471,7 +1374,6 @@ def runkeyStationExternalCompetition():
 
     # In[332]:
 
-
     import pandas as pd
 
     # 假设 competitive_score 是你已有的 list[dict]
@@ -1491,7 +1393,6 @@ def runkeyStationExternalCompetition():
 
     # In[333]:
 
-
     # 删除现有的NULL id列（如果存在）
     if 'id' in competitive_score2.columns:
         competitive_score2 = competitive_score2.drop('id', axis=1)
@@ -1501,11 +1402,9 @@ def runkeyStationExternalCompetition():
 
     # In[334]:
 
-
     competitive_score2
 
     # In[335]:
-
 
     # # 表和字段注释
     # table_comment = "重点站点_外部竞争力_竞争画像得分"
@@ -1528,9 +1427,7 @@ def runkeyStationExternalCompetition():
     #     update_columns=True
     # )
 
-
     # In[336]:
-
 
     table_comment = "重点站点_外部竞争力_竞争画像得分"
 
@@ -1552,7 +1449,4 @@ def runkeyStationExternalCompetition():
     )
 
     # In[ ]:
-
-
-
 

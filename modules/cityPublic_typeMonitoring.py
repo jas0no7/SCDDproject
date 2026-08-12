@@ -336,7 +336,7 @@ def runcityPublic_typeMonitoring():
     LEFT JOIN rec_merchant rm ON cs.property_owner_merhant_id = rm.merchant_id
     where 
     cs.merchant_nature = '电动公司'
-    and operation_status in ('投运','停运') ) a
+    and operation_status in ('投运','退运','停运') ) a
     left join 
     (select * from station_cba_org_data  ) b
     on a.station_no =b.station_no
@@ -1363,7 +1363,7 @@ def runcityPublic_typeMonitoring():
     t2 = str(year) + '%'  # 生成sql中的上年筛选条件
     # 1、筛选提取2024、2025年的充电站成本效益分析表cba中的数据
     sql = """
-    select b.*,a.city,a.station_category,a.dc_charge_point_count,a.ac_charge_point_count from 
+    select b.*,a.city,a.station_category,a.dc_charge_point_count,a.ac_charge_point_count,a.operation_status from 
     (SELECT 
     cs.*
     FROM
@@ -1371,7 +1371,7 @@ def runcityPublic_typeMonitoring():
     LEFT JOIN rec_merchant rm ON cs.property_owner_merhant_id = rm.merchant_id
     where 
     cs.merchant_nature = '电动公司'
-    and cs.operation_status in ('投运','停运')
+    and cs.operation_status in ('投运','退运','停运')
     ) a
     left join 
     (select * from station_cba_org_data where cba_month like '%s' or  cba_month like '%s' ) b
@@ -1447,7 +1447,7 @@ def runcityPublic_typeMonitoring():
     LEFT JOIN rec_merchant rm ON cs.property_owner_merhant_id = rm.merchant_id
     where 
     cs.merchant_nature = '电动公司'
-    and cs.operation_status in ('投运','停运')
+    and cs.operation_status in ('投运','退运','停运')
     ) a
     left join 
     (select * from fin_rec_result_detail where (rec_month like '%s' or  rec_month like '%s') and  merchant_id != 119 ) b
@@ -1516,6 +1516,9 @@ def runcityPublic_typeMonitoring():
     DF_cba_org_data['rec_data'] = DF_cba_org_data['rec_data'].astype(float)
     DF_cba_org_data['rec_cost'] = DF_cba_org_data['rec_cost'].astype(float)
     DF_cba_org_data['gross_profit'] = DF_cba_org_data['gross_profit'].astype(float)
+    DF_cba_org_data_operational = DF_cba_org_data[
+        DF_cba_org_data['operation_status'].isin(['投运', '停运'])
+    ].copy()
 
     df_profile_public = DF_cba_org_data[DF_cba_org_data['station_category'] == '城市公共'].copy()
 
@@ -6038,7 +6041,7 @@ def runcityPublic_typeMonitoring():
         SELECT * FROM charging_station cs
         WHERE cs.station_name LIKE '%%V2G%%'
           AND cs.merchant_nature = '电动公司'
-          AND cs.operation_status IN ('投运','停运')
+          AND cs.operation_status IN ('投运','退运','停运')
     ) a
     LEFT JOIN (
         SELECT * FROM fin_rec_result_detail 
@@ -6062,7 +6065,7 @@ def runcityPublic_typeMonitoring():
         SELECT * FROM charging_station cs
         WHERE cs.station_name LIKE '%%V2G%%'
           AND cs.merchant_nature = '电动公司'
-          AND cs.operation_status IN ('投运','停运')
+          AND cs.operation_status IN ('投运','退运','停运')
     ) a
     LEFT JOIN (
         SELECT * FROM station_cba_org_data 
@@ -6657,7 +6660,7 @@ def runcityPublic_typeMonitoring():
     LEFT JOIN rec_merchant rm ON cs.property_owner_merhant_id = rm.merchant_id
     where 
     cs.merchant_nature = '电动公司'
-    and operation_status in ('投运','停运')
+    and operation_status in ('投运','退运','停运')
 
     """
     DFF_station = SQL(sql)
@@ -6684,7 +6687,7 @@ def runcityPublic_typeMonitoring():
     LEFT JOIN rec_merchant rm ON cs.property_owner_merhant_id = rm.merchant_id
     where 
     cs.merchant_nature = '电动公司'
-    and operation_status in ('投运','停运') and  investment_amount is not null) a
+    and operation_status in ('投运','退运','停运') and  investment_amount is not null) a
     left join 
     (select * from station_cba_org_data  ) b
     on a.station_no =b.station_no
@@ -6725,7 +6728,7 @@ def runcityPublic_typeMonitoring():
     LEFT JOIN rec_merchant rm ON cs.property_owner_merhant_id = rm.merchant_id
     where 
     cs.merchant_nature = '电动公司'
-    and cs.operation_status in ('投运','停运')
+    and cs.operation_status in ('投运','退运','停运')
     ) a
     left join 
     (select * from fin_rec_result_detail where rec_month <%s and   merchant_id != 119 ) b
@@ -6844,36 +6847,37 @@ def runcityPublic_typeMonitoring():
 
     # In[1221]:
 
-    DF_cba_org_data['charge_point_count'] = DF_cba_org_data['dc_charge_point_count'].fillna(0) + DF_cba_org_data['ac_charge_point_count'].fillna(0)
+    DF_cba_org_data_charge = DF_cba_org_data_operational.copy()
+    DF_cba_org_data_charge['charge_point_count'] = DF_cba_org_data_charge['dc_charge_point_count'].fillna(0) + DF_cba_org_data_charge['ac_charge_point_count'].fillna(0)
 
     # In[1222]:
 
     # 查看两个 station_no 列是否相同
     # 删除重复列，保留第一个
-    DF_cba_org_data = DF_cba_org_data.loc[:, ~DF_cba_org_data.columns.duplicated()]
+    DF_cba_org_data_charge = DF_cba_org_data_charge.loc[:, ~DF_cba_org_data_charge.columns.duplicated()]
 
     # In[1223]:
-    print(DF_cba_org_data.columns.tolist())
-    print("operation_status" in DF_cba_org_data.columns)
-    print(DF_cba_org_data.head())
+    print(DF_cba_org_data_charge.columns.tolist())
+    print("operation_status" in DF_cba_org_data_charge.columns)
+    print(DF_cba_org_data_charge.head())
 
-    DF_cba_org_data = DF_cba_org_data[DF_cba_org_data['charge_point_count'] != 0]
-    DF_cba_org_data = DF_cba_org_data[DF_cba_org_data['plat_data_charging_volume'] != 0]
-    DF_cba_org_data['gun_charging_volume'] = DF_cba_org_data['plat_data_charging_volume'] / DF_cba_org_data['charge_point_count']
+    DF_cba_org_data_charge = DF_cba_org_data_charge[DF_cba_org_data_charge['charge_point_count'] != 0]
+    DF_cba_org_data_charge = DF_cba_org_data_charge[DF_cba_org_data_charge['plat_data_charging_volume'] != 0]
+    DF_cba_org_data_charge['gun_charging_volume'] = DF_cba_org_data_charge['plat_data_charging_volume'] / DF_cba_org_data_charge['charge_point_count']
 
     # In[1224]:
 
-    DF_cba_org_data['days_in_month'] = DF_cba_org_data['cba_month'].apply(lambda x: calendar.monthrange(int(x[:4]), int(x[4:]))[1])
+    DF_cba_org_data_charge['days_in_month'] = DF_cba_org_data_charge['cba_month'].apply(lambda x: calendar.monthrange(int(x[:4]), int(x[4:]))[1])
 
     # In[1225]:
 
-    DF_cba_org_data['gun_charging_volume_day'] = DF_cba_org_data['gun_charging_volume'] / DF_cba_org_data['days_in_month']
+    DF_cba_org_data_charge['gun_charging_volume_day'] = DF_cba_org_data_charge['gun_charging_volume'] / DF_cba_org_data_charge['days_in_month']
 
     # In[ ]:
 
     # In[1226]:
 
-    DF_cba_org_datawe = DF_cba_org_data[(DF_cba_org_data['cba_month'] == M) & (DF_cba_org_data['station_category'] == '城市公共')][['gun_charging_volume_day', 'station_no']].copy()
+    DF_cba_org_datawe = DF_cba_org_data_charge[(DF_cba_org_data_charge['cba_month'] == M) & (DF_cba_org_data_charge['station_category'] == '城市公共')][['gun_charging_volume_day', 'station_no']].copy()
 
     # In[1227]:
 
@@ -10703,7 +10707,7 @@ def runcityPublic_typeMonitoring():
 
     # ## 首页
 
-    # ### 平台累计充电枪保有量
+    # ### 平台在运充电枪保有量
 
     # In[1399]:
 
@@ -10713,7 +10717,7 @@ def runcityPublic_typeMonitoring():
 
     total_charge_points_pt
 
-    # ### 平台累计总额定功率
+    # ### 平台在运总额定功率
 
     # In[1401]:
 
@@ -11263,7 +11267,7 @@ def runcityPublic_typeMonitoring():
     LEFT JOIN rec_merchant rm ON cs.property_owner_merhant_id = rm.merchant_id
     where 
     cs.merchant_nature = '电动公司'
-    and cs.operation_status in ('投运','停运')
+    and cs.operation_status in ('投运','退运','停运')
     ) a
     left join 
     (select * from station_cba_org_data where cba_month like '%s' or  cba_month like '%s' ) b
@@ -11339,7 +11343,7 @@ def runcityPublic_typeMonitoring():
     LEFT JOIN rec_merchant rm ON cs.property_owner_merhant_id = rm.merchant_id
     where 
     cs.merchant_nature = '电动公司'
-    and cs.operation_status in ('投运','停运')
+    and cs.operation_status in ('投运','退运','停运')
     ) a
     left join 
     (select * from fin_rec_result_detail where (rec_month like '%s' or  rec_month like '%s') and  merchant_id != 119 ) b
@@ -11553,13 +11557,13 @@ def runcityPublic_typeMonitoring():
 
     targetData = [
         # {
-        #     "title": "累计充电枪保有量",
+        #     "title": "在运充电枪保有量",
         #     "value": str(int(total_charge_points_pt)),
         #     "unit": "把",
         #     "prefix": ""
         # },
         # {
-        #     "title": "累计总额定功率",
+        #     "title": "在运总额定功率",
         #     "value": str(int(total_charge_capacity_pt)),
         #     "unit": "万kW",
         #     "prefix": ""
@@ -11701,13 +11705,13 @@ def runcityPublic_typeMonitoring():
 
     targetData = [
         # {
-        #     "title": "平台累计充电枪保有量",
+        #     "title": "平台在运充电枪保有量",
         #     "value": str(int(csgg_total_point)),
         #     "unit": "把",
         #     "prefix": ""
         # },
         # {
-        #     "title": "平台累计总额定功率",
+        #     "title": "平台在运总额定功率",
         #     "value": str(float(csgg_total_capacity)),
         #     "unit": "万kW",
         #     "prefix": ""
@@ -11843,13 +11847,13 @@ def runcityPublic_typeMonitoring():
 
     targetData = [
         # {
-        #     "title": "平台累计充电枪保有量",
+        #     "title": "平台在运充电枪保有量",
         #     "value": str(int(zkzy_total_point)),
         #     "unit": "把",
         #     "prefix": ""
         # },
         # {
-        #     "title": "平台累计总额定功率",
+        #     "title": "平台在运总额定功率",
         #     "value": str(float(zkzy_total_capacity)),
         #     "unit": "万kW",
         #     "prefix": ""
@@ -11981,13 +11985,13 @@ def runcityPublic_typeMonitoring():
 
     targetData = [
         # {
-        #     "title": "平台累计充电枪保有量",
+        #     "title": "平台在运充电枪保有量",
         #     "value": str(int(gjzy_total_point)),
         #     "unit": "把",
         #     "prefix": ""
         # },
         # {
-        #     "title": "平台累计总额定功率",
+        #     "title": "平台在运总额定功率",
         #     "value": str(float(gjzy_total_capacity)),
         #     "unit": "万kW",
         #     "prefix": ""
@@ -12118,13 +12122,13 @@ def runcityPublic_typeMonitoring():
 
     targetData = [
         # {
-        #     "title": "平台累计充电枪保有量",
+        #     "title": "平台在运充电枪保有量",
         #     "value": str(int(gsgg_total_point)),
         #     "unit": "把",
         #     "prefix": ""
         # },
         # {
-        #     "title": "平台累计总额定功率",
+        #     "title": "平台在运总额定功率",
         #     "value": str(float(gsgg_total_capacity)),
         #     "unit": "万kW",
         #     "prefix": ""
@@ -12255,13 +12259,13 @@ def runcityPublic_typeMonitoring():
 
     targetData = [
         # {
-        #     "title": "平台累计充电枪保有量",
+        #     "title": "平台在运充电枪保有量",
         #     "value": str(int(xqyx_total_point)),
         #     "unit": "把",
         #     "prefix": ""
         # },
         # {
-        #     "title": "平台累计总额定功率",
+        #     "title": "平台在运总额定功率",
         #     "value": str(float(xqyx_total_capacity)),
         #     "unit": "kW",
         #     "prefix": ""
@@ -12392,13 +12396,13 @@ def runcityPublic_typeMonitoring():
 
     targetData = [
         # {
-        #     "title": "平台累计充电枪保有量",
+        #     "title": "平台在运充电枪保有量",
         #     "value": str(int(qtzy_total_point)),
         #     "unit": "把",
         #     "prefix": ""
         # },
         # {
-        #     "title": "平台累计总额定功率",
+        #     "title": "平台在运总额定功率",
         #     "value": str(float(qtzy_total_capacity)),
         #     "unit": "万kW",
         #     "prefix": ""
@@ -13016,8 +13020,8 @@ def runcityPublic_typeMonitoring():
         {
             "title": "建设情况",
             "content": [
-                {"name": "累计充电枪保有量", "value": int(csgg_total_point), "unit": '个'},
-                {"name": "累计总额定功率", "value": float(csgg_total_capacity), "unit": '万kW'}
+                {"name": "在运充电枪保有量", "value": int(csgg_total_point), "unit": '个'},
+                {"name": "在运总额定功率", "value": float(csgg_total_capacity), "unit": '万kW'}
             ],
             "trend": "枪数与功率均稳步增长，充电基础设施持续扩容"
         },
@@ -13161,8 +13165,8 @@ def runcityPublic_typeMonitoring():
         {
             "title": "建设情况",
             "content": [
-                {"name": "累计充电枪保有量", "value": int(zkzy_total_point), "unit": '个'},
-                {"name": "累计总额定功率", "value": float(zkzy_total_capacity), "unit": '万kW'}
+                {"name": "在运充电枪保有量", "value": int(zkzy_total_point), "unit": '个'},
+                {"name": "在运总额定功率", "value": float(zkzy_total_capacity), "unit": '万kW'}
             ],
             "trend": "枪数与功率均稳步增长，充电基础设施持续扩容"
         },
@@ -13314,8 +13318,8 @@ def runcityPublic_typeMonitoring():
         {
             "title": "建设情况",
             "content": [
-                {"name": "累计充电枪保有量", "value": int(gjzy_total_point), "unit": '个'},
-                {"name": "累计总额定功率", "value": float(gjzy_total_capacity), "unit": '万kW'}
+                {"name": "在运充电枪保有量", "value": int(gjzy_total_point), "unit": '个'},
+                {"name": "在运总额定功率", "value": float(gjzy_total_capacity), "unit": '万kW'}
             ],
             "trend": "枪数与功率均稳步增长，充电基础设施持续扩容"
         },
@@ -13464,8 +13468,8 @@ def runcityPublic_typeMonitoring():
         {
             "title": "建设情况",
             "content": [
-                {"name": "累计充电枪保有量", "value": int(gsgg_total_point), "unit": '个'},
-                {"name": "累计总额定功率", "value": float(gsgg_total_capacity), "unit": '万kW'}
+                {"name": "在运充电枪保有量", "value": int(gsgg_total_point), "unit": '个'},
+                {"name": "在运总额定功率", "value": float(gsgg_total_capacity), "unit": '万kW'}
             ],
             "trend": "枪数与功率均稳步增长，充电基础设施持续扩容"
         },
@@ -13611,8 +13615,8 @@ def runcityPublic_typeMonitoring():
         {
             "title": "建设情况",
             "content": [
-                {"name": "累计充电枪保有量", "value": int(xqyx_total_point), "unit": '个'},
-                {"name": "累计总额定功率", "value": float(xqyx_total_capacity), "unit": '万kW'}
+                {"name": "在运充电枪保有量", "value": int(xqyx_total_point), "unit": '个'},
+                {"name": "在运总额定功率", "value": float(xqyx_total_capacity), "unit": '万kW'}
             ],
             "trend": "枪数与功率均稳步增长，充电基础设施持续扩容"
         },
@@ -13757,8 +13761,8 @@ def runcityPublic_typeMonitoring():
         {
             "title": "建设情况",
             "content": [
-                {"name": "累计充电枪保有量", "value": int(qtzy_total_point), "unit": '个'},
-                {"name": "累计总额定功率", "value": float(qtzy_total_capacity), "unit": '万kW'}
+                {"name": "在运充电枪保有量", "value": int(qtzy_total_point), "unit": '个'},
+                {"name": "在运总额定功率", "value": float(qtzy_total_capacity), "unit": '万kW'}
             ],
             "trend": "枪数与功率均稳步增长，充电基础设施持续扩容"
         },
@@ -13906,8 +13910,8 @@ def runcityPublic_typeMonitoring():
         {
             "title": "建设情况",
             "content": [
-                {"name": "累计充电枪保有量", "value": int(v2g_point_zongshu), "unit": '个'},
-                {"name": "累计总额定功率", "value": float(v2g_capacity_zongshu), "unit": '万kW'}
+                {"name": "在运充电枪保有量", "value": int(v2g_point_zongshu), "unit": '个'},
+                {"name": "在运总额定功率", "value": float(v2g_capacity_zongshu), "unit": '万kW'}
             ],
             "trend": "枪数与功率均稳步增长，充电基础设施持续扩容"
         },

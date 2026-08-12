@@ -1189,7 +1189,7 @@ def runtypeMonitoringOverview():
     LEFT JOIN rec_merchant rm ON cs.property_owner_merhant_id = rm.merchant_id
     where 
     cs.merchant_nature = "电动公司"
-    and cs.operation_status in ('投运','停运')
+    and cs.operation_status in ('投运','退运','停运')
     ) a
     left join 
     (select * from station_cba_org_data where cba_month like '%s' or  cba_month like '%s' ) b
@@ -1265,7 +1265,7 @@ def runtypeMonitoringOverview():
     LEFT JOIN rec_merchant rm ON cs.property_owner_merhant_id = rm.merchant_id
     where 
     cs.merchant_nature = "电动公司"
-    and cs.operation_status in ('投运','停运')
+    and cs.operation_status in ('投运','退运','停运')
     ) a
     left join 
     (select * from fin_rec_result_detail where (rec_month like '%s' or  rec_month like '%s') and  merchant_id != 119 ) b
@@ -2901,7 +2901,7 @@ def runtypeMonitoringOverview():
     # 计算总额定功率
     total_capacity = df_in_service['station_capacity'].sum()
     total_capacity = total_capacity / 10000
-    total_capacity = total_capacity.round(2)
+    total_capacity = round(total_capacity, 2)
     total_capacity
 
     # ### 投资情况维度
@@ -2963,7 +2963,7 @@ def runtypeMonitoringOverview():
 
     # In[221]:
 
-    thismonth_pue = thismonth_pue.round(2)
+    thismonth_pue = round(thismonth_pue, 2)
 
     # In[222]:
 
@@ -2971,11 +2971,13 @@ def runtypeMonitoringOverview():
 
     # In[223]:
 
-    lastmonth_pue = lastmonth_pue.round(2)
+    lastmonth_pue = round(lastmonth_pue, 2)
 
     # In[224]:
 
-    if thismonth_pue >= lastmonth_pue:
+    if pd.isna(thismonth_pue) or pd.isna(lastmonth_pue):
+        q1 = "本月功率利用率数据不足，暂无环比结论"
+    elif thismonth_pue >= lastmonth_pue:
         q1 = "本月功率利用率环比上升，运营效率稳步提升"
     else:
         q1 = "本月功率利用率环比下降，运营效率有所退步"
@@ -3142,7 +3144,7 @@ def runtypeMonitoringOverview():
     LEFT JOIN rec_merchant rm ON cs.property_owner_merhant_id = rm.merchant_id
     where 
     cs.merchant_nature = "电动公司"
-    and cs.operation_status in ('投运','停运')
+    and cs.operation_status in ('投运','退运','停运')
     ) a
     left join 
     (select * from station_cba_org_data where cba_month like '%s' or  cba_month like '%s' ) b
@@ -3216,7 +3218,7 @@ def runtypeMonitoringOverview():
     LEFT JOIN rec_merchant rm ON cs.property_owner_merhant_id = rm.merchant_id
     where 
     cs.merchant_nature = "电动公司"
-    and cs.operation_status in ('投运','停运')
+    and cs.operation_status in ('投运','退运','停运')
     ) a
     left join 
     (select * from fin_rec_result_detail where (rec_month like '%s' or  rec_month like '%s') and  merchant_id != 119 ) b
@@ -3350,8 +3352,8 @@ def runtypeMonitoringOverview():
         {
             "title": "建设情况",
             "content": [
-                {"name": "累计充电枪保有量", "value": int(total_guns), "unit": '把'},
-                {"name": "累计总额定功率", "value": float(total_capacity), "unit": '万kW'}
+                {"name": "在运充电枪保有量", "value": int(total_guns), "unit": '把'},
+                {"name": "在运总额定功率", "value": float(total_capacity), "unit": '万kW'}
             ],
             "trend": "枪数与功率均稳步增长，充电基础设施持续扩容"
         },

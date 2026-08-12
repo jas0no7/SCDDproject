@@ -1,7 +1,6 @@
 from logs.log_decorator import log_execution
 from loguru import logger
-from modules.config import SQL,import_data_with_cursor,Statistical_Time
-
+from modules.config import SQL, import_data_with_cursor, Statistical_Time
 
 
 @log_execution
@@ -62,8 +61,8 @@ def runkeyStationInternalCompetition():
         charging_station cs
     LEFT JOIN rec_merchant rm ON cs.property_owner_merhant_id = rm.merchant_id
     WHERE 
-        rm.merchant_name = '国网电动汽车服务（四川）有限公司'
-        AND cs.operation_status IN ('投运', '退运')
+        cs.merchant_nature = '电动公司'
+        AND cs.operation_status IN ('投运', '退运', '停运')
         AND DATE_FORMAT(cs.commissioning_time, '%Y%m') < '{}'
     """.format(M)
 
@@ -137,7 +136,7 @@ def runkeyStationInternalCompetition():
     # In[244]:
 
     # ==================注释==================
-    # 统计四川电动投资金额不为空的每个投运站点的总收入、总支出
+    # 统计四川电动投资金额不为空的每个投运、退运、停运站点的总收入、总支出
     # station_no：站点编号
     # revenue：总收入
     # cost：总支出
@@ -167,8 +166,8 @@ def runkeyStationInternalCompetition():
     charging_station cs
     LEFT JOIN rec_merchant rm ON cs.property_owner_merhant_id = rm.merchant_id
     where 
-    rm.merchant_name = '国网电动汽车服务（四川）有限公司'
-    and operation_status in ('投运','退运') and  investment_amount is not null) a
+    cs.merchant_nature = '电动公司'
+    and operation_status in ('投运','退运','停运') and  investment_amount is not null) a
     left join 
     (select * from station_cba_org_data
     where cba_month<='{M}') b
@@ -225,7 +224,8 @@ def runkeyStationInternalCompetition():
     rec_merchant_rec_station rmr ON cs.station_no = rmr.station_on
     LEFT JOIN
     scdd_rec_rules sr ON rmr.merchant_id = sr.merchant_id
-    where property_owner_merhant_id =119
+    where cs.merchant_nature = '电动公司'
+    and cs.operation_status in ('投运','退运','停运')
     and  JSON_UNQUOTE(JSON_EXTRACT(sr.profit_detail, '$.parkingFee')) IS NOT NULL;
     """
     df4 = SQL(sql4)
@@ -259,8 +259,8 @@ def runkeyStationInternalCompetition():
     charging_station cs
     LEFT JOIN rec_merchant rm ON cs.property_owner_merhant_id = rm.merchant_id
     where 
-    rm.merchant_name = '国网电动汽车服务（四川）有限公司'
-    and cs.operation_status in ('投运','退运')
+    cs.merchant_nature = '电动公司'
+    and cs.operation_status in ('投运','退运','停运')
     ) a
     left join 
     (select * from fin_rec_result_detail where rec_month <={M} and merchant_id != 119 ) b
@@ -289,7 +289,7 @@ def runkeyStationInternalCompetition():
 
     sql6 = f"""
     select station_no,stat_time,maintenance_cost as maintenance_cost from  dp_station_maintenance_cost1
-    where 
+    where
     (stat_time <= {M}) and maintenance_cost>0
     group by station_no,stat_time;
     """
@@ -319,8 +319,8 @@ def runkeyStationInternalCompetition():
     charging_station cs
     LEFT JOIN rec_merchant rm ON cs.property_owner_merhant_id = rm.merchant_id
     where 
-    rm.merchant_name = '国网电动汽车服务（四川）有限公司'
-    and operation_status in ('投运','退运');
+    cs.merchant_nature = '电动公司'
+    and operation_status in ('投运','退运','停运');
     """
     df7 = SQL(sql7)
     df7.loc[df7['station_category'] == '高速', 'station_category'] = '高速公共'
@@ -346,8 +346,8 @@ def runkeyStationInternalCompetition():
     charging_station cs
     LEFT JOIN rec_merchant rm ON cs.property_owner_merhant_id = rm.merchant_id
     where 
-    rm.merchant_name = '国网电动汽车服务（四川）有限公司'
-    and  cs.operation_status in ('投运','退运')) a
+    cs.merchant_nature = '电动公司'
+    and  cs.operation_status in ('投运','退运','停运')) a
     left join 
     (select station_no,cba_month,plat_data_charging_volume,rec_data_elec_fee_revenue,rec_cost_elec_fee,rec_data_service_fee_revenue from station_cba_org_data where cba_month in ('{M}','{previous_month_str}') ) b
     on a.station_no =b.station_no
@@ -378,7 +378,8 @@ def runkeyStationInternalCompetition():
 
     # In[262]:
 
-    df8['dif_in_elec'] = df8['rec_data_elec_fee_revenue'].fillna(0) / df8['plat_data_charging_volume'] - df8['rec_cost_elec_fee'].fillna(0) / df8['plat_data_charging_volume']
+    df8['dif_in_elec'] = df8['rec_data_elec_fee_revenue'].fillna(0) / df8['plat_data_charging_volume'] - df8[
+        'rec_cost_elec_fee'].fillna(0) / df8['plat_data_charging_volume']
     df8['dif_in_elec'] = df8['dif_in_elec'].fillna(0)
 
     print(df8.shape)
@@ -445,8 +446,6 @@ def runkeyStationInternalCompetition():
     # #### 月充电服务费的环比计算
 
     # In[264]:
-
-
 
     # 创建服务费环比列，初始化为 NaN
     df8['service_fee_revenue_mom'] = np.nan
@@ -567,13 +566,8 @@ def runkeyStationInternalCompetition():
 
     # In[268]:
 
-    # 筛选当前四川电动旗下投运状态的全量站点数据+技改站
-    data1 = df1[((df1['operation_status'] == '投运') |
-                 (df1['station_no'].isin(["300003000100002472",
-                                          "300003000100002473",
-                                          "300003013200011",
-                                          "300003013200099",
-                                          "300003013200108"])))]
+    # 筛选四川电动旗下投运、退运、停运状态的全量站点数据
+    data1 = df1[df1['operation_status'].isin(['投运', '退运', '停运'])]
     print(data1.shape)
     data1.head(1)
 
@@ -584,8 +578,8 @@ def runkeyStationInternalCompetition():
     # 合并站点补贴数据
     print('含有补贴的站点数量：', df2_cal.shape)
     data2 = pd.merge(data1, df2_cal, how='left', on='station_no').fillna(0)
-    print('合并后的投运的站点数量：', data2.shape)
-    print('四川电动投运站点中含有补贴的站点的数量：', data2[data2['total_subsidy'] != 0].shape)
+    print('合并后的投运、退运、停运站点数量：', data2.shape)
+    print('四川电动投运、退运、停运站点中含有补贴的站点数量：', data2[data2['total_subsidy'] != 0].shape)
     data2.head(1)
 
     # ### 运营数据合并
@@ -594,8 +588,8 @@ def runkeyStationInternalCompetition():
 
     # 合并各站点的运营总投入和总支出
     data3 = pd.merge(data2, df3_cal, how='left', on='station_no').fillna(0)
-    print('合并后的投运的站点数量：', data3.shape)
-    print('四川电动投运站点中含有运营数据的站点的数量：', data3[data3['revenue'] != 0].shape)
+    print('合并后的投运、退运、停运站点数量：', data3.shape)
+    print('四川电动投运、退运、停运站点中含有运营数据的站点数量：', data3[data3['revenue'] != 0].shape)
     data3.head(1)
 
     # ### 站点租金合并
@@ -604,8 +598,8 @@ def runkeyStationInternalCompetition():
 
     # 合并站点租金
     data4 = pd.merge(data3, df4, how='left', on='station_no').fillna(0)
-    print('合并后的投运的站点数量：', data4.shape)
-    print('四川电动投运站点中含有租金数据的站点的数量：', data4[data4['parking_fee'] != 0].shape)
+    print('合并后的投运、退运、停运站点数量：', data4.shape)
+    print('四川电动投运、退运、停运站点中含有租金数据的站点数量：', data4[data4['parking_fee'] != 0].shape)
     data4.head(1)
 
     # ### 分成数据合并
@@ -614,8 +608,8 @@ def runkeyStationInternalCompetition():
 
     # 合并站点分成
     data5 = pd.merge(data4, df5_cal, how='left', on='station_no').fillna(0)
-    print('合并后的投运的站点数量：', data5.shape)
-    print('四川电动投运站点中含有分成数据的站点的数量：', data5[data5['merchant_profit_amount'] != 0].shape)
+    print('合并后的投运、退运、停运站点数量：', data5.shape)
+    print('四川电动投运、退运、停运站点中含有分成数据的站点数量：', data5[data5['merchant_profit_amount'] != 0].shape)
     data5.head(1)
 
     # ### 运维数据合并
@@ -624,8 +618,8 @@ def runkeyStationInternalCompetition():
 
     # 合并站点运维费
     data6 = pd.merge(data5, df6_cal, how='left', on='station_no').fillna(0)
-    print('合并后的投运的站点数量：', data6.shape)
-    print('四川电动投运站点中含有运维数据的站点的数量：', data6[data6['maintenance_cost'] != 0].shape)
+    print('合并后的投运、退运、停运站点数量：', data6.shape)
+    print('四川电动投运、退运、停运站点中含有运维数据的站点数量：', data6[data6['maintenance_cost'] != 0].shape)
     data6.head(1)
 
     # ### 当年补贴数据合并
@@ -639,8 +633,8 @@ def runkeyStationInternalCompetition():
     # In[275]:
 
     data7 = pd.merge(data6, df2_year, how='left', on='station_no').fillna(0)
-    print('合并后的投运的站点数量：', data7.shape)
-    print('四川电动投运站点中含有当年补贴数据的站点的数量：', data7[data7['当年_total_subsidy'] != 0].shape)
+    print('合并后的投运、退运、停运站点数量：', data7.shape)
+    print('四川电动投运、退运、停运站点中含有当年补贴数据的站点数量：', data7[data7['当年_total_subsidy'] != 0].shape)
     data7.head(1)
 
     # ### 当年运营收入数据合并
@@ -662,8 +656,8 @@ def runkeyStationInternalCompetition():
 
     # 合并当年运营收入
     data8 = pd.merge(data7, df3_year, how='left', on='station_no').fillna(0)
-    print('合并后的投运的站点数量：', data8.shape)
-    print('四川电动投运站点中含有当年运营收入数据的站点的数量：', data8[data8['当年_revenue'] != 0].shape)
+    print('合并后的投运、退运、停运站点数量：', data8.shape)
+    print('四川电动投运、退运、停运站点中含有当年运营收入数据的站点数量：', data8[data8['当年_revenue'] != 0].shape)
     data8.head(1)
 
     # ### 技改站数据合并-特殊处理
@@ -707,7 +701,9 @@ def runkeyStationInternalCompetition():
     # In[283]:
 
     data9['in'] = data9['total_subsidy'].astype('float') + data9['revenue'].astype('float')
-    data9['out'] = data9['investment_amount'].astype('float') + data9['cost'].astype('float') + (data9['parking_fee'] * data9['累计投运月份数']).astype('float') + data9['merchant_profit_amount'].astype('float') + data9['maintenance_cost'].astype('float')
+    data9['out'] = data9['investment_amount'].astype('float') + data9['cost'].astype('float') + (
+                data9['parking_fee'] * data9['累计投运月份数']).astype('float') + data9[
+                       'merchant_profit_amount'].astype('float') + data9['maintenance_cost'].astype('float')
     data9.head(1)
 
     # In[284]:
@@ -864,10 +860,7 @@ def runkeyStationInternalCompetition():
     # In[290]:
 
     # 步骤1：处理df1创建df1_process
-    condition = (df1['operation_status'] == '投运') | (df1['station_no'].isin([
-        "300003000100002472", "300003000100002473", "300003013200011",
-        "300003013200099", "300003013200108"
-    ]))
+    condition = df1['operation_status'].isin(['投运', '退运', '停运'])
     df1_process = df1[condition].copy()
 
     print(df1_process.shape)
@@ -930,7 +923,9 @@ def runkeyStationInternalCompetition():
     # In[296]:
 
     # 步骤6：计算当月收入
-    income1['income'] = (income1['revenue'] - income1['cost'] - income1['parking_fee'] - income1['merchant_profit_amount'] - income1['maintenance_cost'])
+    income1['income'] = (
+                income1['revenue'] - income1['cost'] - income1['parking_fee'] - income1['merchant_profit_amount'] -
+                income1['maintenance_cost'])
     print(income1.info())
 
     # In[297]:
@@ -938,9 +933,8 @@ def runkeyStationInternalCompetition():
     # 定义目标station_no列表（去重）
     target_stations = ["300003000100019488", "300003000100017539", "300003000100017538", "300003000100019487"]
 
-
     # 注意：多个条件用&连接，每个条件需用()包裹
-    mask = (income1['station_no'].isin(target_stations)) & (income1['cba_month'] == M )
+    mask = (income1['station_no'].isin(target_stations)) & (income1['cba_month'] == M)
 
     # 提取符合条件的行，保留station_no、cba_month、income列（便于核对）
     result = income1[mask][['station_no', 'cba_month', 'income']]
@@ -1100,7 +1094,8 @@ def runkeyStationInternalCompetition():
             return max(total_months, 0)
         except Exception as e:
             # 打印错误行和错误信息
-            print(f"Error in row: station_no={row['station_no']}, year={row['year']}, commissioning_time={row['commissioning_time']}")
+            print(
+                f"Error in row: station_no={row['station_no']}, year={row['year']}, commissioning_time={row['commissioning_time']}")
             print(f"Error details: {e}")
             return 0  # 返回默认值
 
@@ -1113,7 +1108,8 @@ def runkeyStationInternalCompetition():
     # In[304]:
 
     # 第六步：创建balance2表
-    balance2 = balance1[['station_no', 'year', 'total_subsidy', 'except_investment_amount', 'investment_amount', '今年之前的累计投运月份']].copy()
+    balance2 = balance1[['station_no', 'year', 'total_subsidy', 'except_investment_amount', 'investment_amount',
+                         '今年之前的累计投运月份']].copy()
 
     # In[305]:
 
@@ -1133,7 +1129,8 @@ def runkeyStationInternalCompetition():
     # 替换技改站点数据
     for old_val, new_val in mapping.items():
         # 获取新站点的数据（只取第一行）
-        new_data = balance3[balance3['station_no'] == new_val].iloc[0] if not balance3[balance3['station_no'] == new_val].empty else None
+        new_data = balance3[balance3['station_no'] == new_val].iloc[0] if not balance3[
+            balance3['station_no'] == new_val].empty else None
 
         if new_data is not None:
             # 替换旧站点的数据
@@ -1164,7 +1161,8 @@ def runkeyStationInternalCompetition():
     # In[307]:
 
     # 第八步：计算balance（盈亏平衡点）
-    balance4['balance'] = (balance4['investment_amount'] - balance4['total_subsidy'] - balance4['except_investment_amount']) / (8 * 12 - balance4['今年之前的累计投运月份'])
+    balance4['balance'] = (balance4['investment_amount'] - balance4['total_subsidy'] - balance4[
+        'except_investment_amount']) / (8 * 12 - balance4['今年之前的累计投运月份'])
 
     # 将balance和'今年之前的累计投运月份'同时匹配到income2
     # 添加income2的year列
@@ -1179,7 +1177,8 @@ def runkeyStationInternalCompetition():
 
     # 同时匹配两列到income2
     income2['balance'] = income2['match_key'].apply(lambda x: columns_map.get(x, {}).get('balance'))
-    income2['今年之前的累计投运月份'] = income2['match_key'].apply(lambda x: columns_map.get(x, {}).get('今年之前的累计投运月份'))
+    income2['今年之前的累计投运月份'] = income2['match_key'].apply(
+        lambda x: columns_map.get(x, {}).get('今年之前的累计投运月份'))
 
     # 清理临时列
     income2.drop(['year', 'match_key'], axis=1, inplace=True)
@@ -1529,8 +1528,8 @@ def runkeyStationInternalCompetition():
                 "month": M
             })
 
-    # 创建最终表，每行包含一个站点的完整数据
-    Database_Table5 = pd.DataFrame(results)
+    # 创建最终表，每行包含一个站点的完整数据；即使 results 为空，也保留字段结构
+    Database_Table5 = pd.DataFrame(results, columns=['siteNum', 'barChartData', 'profitPoint', 'month'])
 
     # 输出结果
     Database_Table5
@@ -1590,25 +1589,23 @@ def runkeyStationInternalCompetition():
 
     print(Database_Table5.head(5))
 
-
     table_comment = "重点站点页-月度收支平衡点"
     column_comments = {
         'siteNum': '站点编号',
         'barChartData': '图中数据',
         'profitPoint': '右边数据及备注',
         'month': '分析年月'
-    
+
     }
 
-   
     # 执行导入（覆盖数据，更新列结构）
     import_data_with_cursor(
         df=Database_Table5,
         table_name="dp_KeyStation_Break_even_point",
         table_comment=table_comment,
         column_comments=column_comments,
-       # primary_keys=['month']  # 指定主键
-       primary_keys=['siteNum', 'month']  # 指定主键
+        # primary_keys=['month']  # 指定主键
+        primary_keys=['siteNum', 'month']  # 指定主键
     )
 
     # ## 重点站点基础信息概览
@@ -1636,13 +1633,8 @@ def runkeyStationInternalCompetition():
 
     # In[316]:
 
-    # 筛选当前四川电动旗下投运状态的全量站点数据+技改站
-    basic1 = df7[((df7['operation_status'] == '投运') |
-                  (df7['station_no'].isin(["300003000100002472",
-                                           "300003000100002473",
-                                           "300003013200011",
-                                           "300003013200099",
-                                           "300003013200108"])))]
+    # 基础信息表含金额指标，因此站点范围统一为投运、退运、停运。
+    basic1 = df7[df7['operation_status'].isin(['投运', '退运', '停运'])]
     print(basic1.shape)
     basic1.head(1)
 
@@ -1652,7 +1644,7 @@ def runkeyStationInternalCompetition():
     df8 = df8.drop(columns=['station_category', 'station_name'])
     # 合并站点电量、电费、服务费的数据
     basic2 = pd.merge(basic1, df8, how='left', on='station_no').fillna(0)
-    print('合并后的投运的站点数量：', basic2.shape)
+    print('合并后的投运、退运、停运站点数量：', basic2.shape)
     basic2.head(1)
 
     # #### 单枪日均充电量计算
@@ -2164,8 +2156,17 @@ def runkeyStationInternalCompetition():
         }
         tableData.append(site_data)
 
-    # 创建最终结果表
-    Database_Table2 = pd.DataFrame(tableData)
+    # 创建最终结果表；即使 tableData 为空，也保留完整字段结构
+    Database_Table2 = pd.DataFrame(tableData, columns=[
+        'siteNameFilters', 'siteTypeFilters', 'siteNum', 'siteName', 'siteType',
+        'ratedPower', 'ChargingCablesNum', 'singleWattCost', 'singleWattBenefits',
+        'recoveryProgress', 'depreciationProgress', 'monthlyChargeValue',
+        'monthlyChargeChain', 'monthlyChargeAverage', 'SingleGunValue',
+        'SingleGunChain', 'SingleGunAverage', 'monthlyCharge', 'monthlyPayment',
+        'electricityBillDifference', 'serviceChargeValue', 'serviceChargeChain',
+        'serviceChargeAverage', 'electricityValue', 'electricityChain',
+        'electricityAverage', 'month'
+    ])
 
     # 输出结果
     Database_Table2
@@ -2303,6 +2304,15 @@ def runkeyStationInternalCompetition():
         l = d1[name]  # 保留标签列
         del d1[name]
 
+        if d1.empty or d1.shape[1] == 0:
+            result = d.copy()
+            result['负理想解距离'] = np.nan
+            result['正理想解距离'] = np.nan
+            result['综合得分'] = np.nan
+            result['综合得分(调整)'] = np.nan
+            result['排名'] = np.nan
+            return result
+
         # 指标正向化处理（假设电量损耗是负向指标）
         # 注意：电量损耗需要取倒数正向化
         if 'electrical_loss_1' in d1.columns:
@@ -2345,8 +2355,8 @@ def runkeyStationInternalCompetition():
     charging_station cs
     LEFT JOIN rec_merchant rm ON cs.property_owner_merhant_id = rm.merchant_id
     where 
-    rm.merchant_name = '国网电动汽车服务（四川）有限公司'
-    and cs.operation_status in ('投运')
+    cs.merchant_nature = '电动公司'
+    and cs.operation_status in ('投运','停运')
     AND DATE_FORMAT(cs.commissioning_time, '%Y%m') < '{}'
     """.format(M)
     DF_SCDD = SQL(sql)
@@ -2388,8 +2398,8 @@ def runkeyStationInternalCompetition():
     DF_SCDD['charge_point_count'] = DF_SCDD['charge_point_count'].apply(calculate_charge_points)
     # 将总桩数列转换为float格式
     DF_SCDD['charge_point_count'] = DF_SCDD['charge_point_count'].astype(float)
-    DF_SCDD['charge_point_count_kW'] = DF_SCDD['station_capacity'] / DF_SCDD['charge_point_count'].replace(0,np.nan)
-    DF_SCDD['charge_point_count_kW'] = DF_SCDD['charge_point_count_kW'].replace([np.inf,-np.inf],np.nan).fillna(0)
+    DF_SCDD['charge_point_count_kW'] = DF_SCDD['station_capacity'] / DF_SCDD['charge_point_count'].replace(0, np.nan)
+    DF_SCDD['charge_point_count_kW'] = DF_SCDD['charge_point_count_kW'].replace([np.inf, -np.inf], np.nan).fillna(0)
 
     print(DF_SCDD.info())
 
@@ -2397,25 +2407,37 @@ def runkeyStationInternalCompetition():
 
     # In[379]:
 
-    charge_point_count_1, charge_point_count_2, charge_point_count_3 = Rank(DF_SCDD, 'charge_point_count', 'point_count_rank')
+    charge_point_count_1, charge_point_count_2, charge_point_count_3 = Rank(DF_SCDD, 'charge_point_count',
+                                                                            'point_count_rank')
 
     # #### 单桩额定功率
 
     # In[380]:
 
-    charge_point_count_kW_rank_1, charge_point_count_kW_rank_2, charge_point_count_kW_rank_3 = Rank(DF_SCDD, 'charge_point_count_kW', 'charge_point_count_kW_rank')
+    charge_point_count_kW_rank_1, charge_point_count_kW_rank_2, charge_point_count_kW_rank_3 = Rank(DF_SCDD,
+                                                                                                    'charge_point_count_kW',
+                                                                                                    'charge_point_count_kW_rank')
 
     # In[381]:
 
     # 建立新表并提取指定列
-    df_build_1 = charge_point_count_kW_rank_1[['station_no', 'station_category', 'station_name', 'charge_point_count_kW', 'charge_point_count_kW_rank']].copy()
-    df_build_2 = charge_point_count_kW_rank_2[['station_no', 'station_category', 'station_name', 'charge_point_count_kW', 'charge_point_count_kW_rank']].copy()
-    df_build_3 = charge_point_count_kW_rank_3[['station_no', 'station_category', 'station_name', 'charge_point_count_kW', 'charge_point_count_kW_rank']].copy()
+    df_build_1 = charge_point_count_kW_rank_1[
+        ['station_no', 'station_category', 'station_name', 'charge_point_count_kW',
+         'charge_point_count_kW_rank']].copy()
+    df_build_2 = charge_point_count_kW_rank_2[
+        ['station_no', 'station_category', 'station_name', 'charge_point_count_kW',
+         'charge_point_count_kW_rank']].copy()
+    df_build_3 = charge_point_count_kW_rank_3[
+        ['station_no', 'station_category', 'station_name', 'charge_point_count_kW',
+         'charge_point_count_kW_rank']].copy()
 
     # 匹配charge_point_count_1的指定列到df_build_1，基于station_no进行匹配
-    df_build_1 = df_build_1.merge(charge_point_count_1[['station_no', 'charge_point_count', 'point_count_rank']], on='station_no', how='left')
-    df_build_2 = df_build_2.merge(charge_point_count_2[['station_no', 'charge_point_count', 'point_count_rank']], on='station_no', how='left')
-    df_build_3 = df_build_3.merge(charge_point_count_3[['station_no', 'charge_point_count', 'point_count_rank']], on='station_no', how='left')
+    df_build_1 = df_build_1.merge(charge_point_count_1[['station_no', 'charge_point_count', 'point_count_rank']],
+                                  on='station_no', how='left')
+    df_build_2 = df_build_2.merge(charge_point_count_2[['station_no', 'charge_point_count', 'point_count_rank']],
+                                  on='station_no', how='left')
+    df_build_3 = df_build_3.merge(charge_point_count_3[['station_no', 'charge_point_count', 'point_count_rank']],
+                                  on='station_no', how='left')
 
     # In[382]:
 
@@ -2568,8 +2590,8 @@ def runkeyStationInternalCompetition():
             "month": M  # 添加月份列
         })
 
-    # 创建最终DataFrame
-    Database_Table9 = pd.DataFrame(final_data)
+    # 创建最终DataFrame；即使 final_data 为空，也保留表结构
+    Database_Table9 = pd.DataFrame(final_data, columns=['siteNum', 'options', 'BarChartData', 'month'])
 
     # 输出结果
     Database_Table9
@@ -2651,7 +2673,8 @@ def runkeyStationInternalCompetition():
     DF_ECO['静态资金回本进度'] = DF_ECO['静态资金回本进度'].replace([np.inf, -np.inf], 0)
 
     # 找出DF_SCDD中存在但DF_ECO中不存在的站点
-    mask = ~DF_SCDD[['station_no', 'station_name']].apply(tuple, axis=1).isin(DF_ECO[['station_no', 'station_name']].apply(tuple, axis=1))
+    mask = ~DF_SCDD[['station_no', 'station_name']].apply(tuple, axis=1).isin(
+        DF_ECO[['station_no', 'station_name']].apply(tuple, axis=1))
     new_stations = DF_SCDD.loc[mask, ['station_no', 'station_name', 'station_category']].copy()
 
     # 添加缺失的列并填充默认值
@@ -2671,15 +2694,18 @@ def runkeyStationInternalCompetition():
     # 创建三个独立的DataFrame
     # 高速公共站点
     df_eco1 = D1_1[['station_no', 'station_name', 'station_category', '设备折旧进度', '设备折旧进度_rank']]
-    df_eco1 = df_eco1.merge(D2_1[['station_no', '静态资金回本进度', '静态资金回本进度_rank']], on='station_no', how='left')
+    df_eco1 = df_eco1.merge(D2_1[['station_no', '静态资金回本进度', '静态资金回本进度_rank']], on='station_no',
+                            how='left')
 
     # 城市公共站点
     df_eco2 = D1_2[['station_no', 'station_name', 'station_category', '设备折旧进度', '设备折旧进度_rank']]
-    df_eco2 = df_eco2.merge(D2_2[['station_no', '静态资金回本进度', '静态资金回本进度_rank']], on='station_no', how='left')
+    df_eco2 = df_eco2.merge(D2_2[['station_no', '静态资金回本进度', '静态资金回本进度_rank']], on='station_no',
+                            how='left')
 
     # 重卡专用站点
     df_eco3 = D1_3[['station_no', 'station_name', 'station_category', '设备折旧进度', '设备折旧进度_rank']]
-    df_eco3 = df_eco3.merge(D2_3[['station_no', '静态资金回本进度', '静态资金回本进度_rank']], on='station_no', how='left')
+    df_eco3 = df_eco3.merge(D2_3[['station_no', '静态资金回本进度', '静态资金回本进度_rank']], on='station_no',
+                            how='left')
 
     # 步骤3：在每个DataFrame中计算经济效益得分
     df_eco1['经济效益得分'] = df_eco1['静态资金回本进度'] - df_eco1['设备折旧进度']
@@ -2708,7 +2734,6 @@ def runkeyStationInternalCompetition():
     print(topsis_df3.head())
     topsis_result3 = cal_topsis(topsis_df3, 'station_no', [1])
     df_eco3 = df_eco3.merge(topsis_result3[['station_no', '综合得分(调整)', '排名']], on='station_no', how='left')
-
 
     # 现在有三个独立的DataFrame：
     # df_eco1 - 高速公共站点
@@ -2812,7 +2837,8 @@ def runkeyStationInternalCompetition():
             "yAxisName": "",
             "markLineName": "平均值",
             "xAxis": str(avg_dict[source_name]["经济效益得分"]),
-            "remark": ["经济效益得分以静态投资回收进度扣减设备折旧进度为基础，通过划定最优、最劣参考基准并计算相对距离的方式量化评分。"]
+            "remark": [
+                "经济效益得分以静态投资回收进度扣减设备折旧进度为基础，通过划定最优、最劣参考基准并计算相对距离的方式量化评分。"]
         })
 
         # 静态投资回收进度
@@ -2828,7 +2854,8 @@ def runkeyStationInternalCompetition():
             "yAxisName": "%",
             "markLineName": "平均值",
             "xAxis": str(avg_dict[source_name]["静态投资回收进度"]),
-            "remark": ["经济效益得分以静态投资回收进度扣减设备折旧进度为基础，通过划定最优、最劣参考基准并计算相对距离的方式量化评分。"]
+            "remark": [
+                "经济效益得分以静态投资回收进度扣减设备折旧进度为基础，通过划定最优、最劣参考基准并计算相对距离的方式量化评分。"]
         })
 
         # 设备折旧进度
@@ -2844,7 +2871,8 @@ def runkeyStationInternalCompetition():
             "yAxisName": "%",
             "markLineName": "平均值",
             "xAxis": str(avg_dict[source_name]["设备折旧进度"]),
-            "remark": ["经济效益得分以静态投资回收进度扣减设备折旧进度为基础，通过划定最优、最劣参考基准并计算相对距离的方式量化评分。"]
+            "remark": [
+                "经济效益得分以静态投资回收进度扣减设备折旧进度为基础，通过划定最优、最劣参考基准并计算相对距离的方式量化评分。"]
         })
 
         return bar_chart_data
@@ -2904,8 +2932,8 @@ def runkeyStationInternalCompetition():
             "month": M
         })
 
-    # 创建最终DataFrame
-    Database_Table6 = pd.DataFrame(final_data)
+    # 创建最终DataFrame；即使 final_data 为空，也保留表结构
+    Database_Table6 = pd.DataFrame(final_data, columns=['siteNum', 'options', 'BarChartData', 'month'])
 
     # 输出结果
     Database_Table6
@@ -3014,7 +3042,8 @@ def runkeyStationInternalCompetition():
 
     # In[403]:
 
-    success_rate_rank_1, success_rate_rank_2, success_rate_rank_3 = Rank(df_success_rate_2, 'success_rate', 'success_rate_rank')
+    success_rate_rank_1, success_rate_rank_2, success_rate_rank_3 = Rank(df_success_rate_2, 'success_rate',
+                                                                         'success_rate_rank')
 
     # In[404]:
 
@@ -3042,7 +3071,8 @@ def runkeyStationInternalCompetition():
 
     # In[407]:
 
-    DF_operation_duration['可用率'] = DF_operation_duration['normal_duration'].astype('int') / DF_operation_duration['operation_duration'].astype('int')
+    DF_operation_duration['可用率'] = DF_operation_duration['normal_duration'].astype('int') / DF_operation_duration[
+        'operation_duration'].astype('int')
 
     # In[408]:
 
@@ -3058,7 +3088,8 @@ def runkeyStationInternalCompetition():
 
     # In[411]:
 
-    DF_operation_duration_2 = pd.merge(DF_SCDD, DF_operation_duration_1, left_on='station_no', right_on='station_code', how='left')
+    DF_operation_duration_2 = pd.merge(DF_SCDD, DF_operation_duration_1, left_on='station_no', right_on='station_code',
+                                       how='left')
 
     # In[412]:
 
@@ -3098,8 +3129,8 @@ def runkeyStationInternalCompetition():
     charging_station cs
     LEFT JOIN rec_merchant rm ON cs.property_owner_merhant_id = rm.merchant_id
     where 
-    rm.merchant_name = '国网电动汽车服务（四川）有限公司'
-    and  cs.operation_status in ('投运')) a
+    cs.merchant_nature = '电动公司'
+    and  cs.operation_status in ('投运','停运')) a
     left join 
     (select * from station_cba_org_data where cba_month  ={M} ) b
     on a.station_no =b.station_no
@@ -3108,7 +3139,8 @@ def runkeyStationInternalCompetition():
 
     # In[417]:
 
-    df_plat_data_charging_volume = DF_cba_org_data[['station_no', 'plat_data_charging_volume', 'rec_cost_elec_cons']].iloc[:, 1:]
+    df_plat_data_charging_volume = DF_cba_org_data[
+                                       ['station_no', 'plat_data_charging_volume', 'rec_cost_elec_cons']].iloc[:, 1:]
 
     # In[418]:
 
@@ -3145,18 +3177,22 @@ def runkeyStationInternalCompetition():
     # In[424]:
 
     # 从df_plat_data_charging_volume_1中提取需要的列，创建df_electrical_loss
-    df_electrical_loss = df_plat_data_charging_volume_1[['merchant_name', 'station_no', 'station_category', 'plat_data_charging_volume', 'rec_cost_elec_cons']].copy()
+    df_electrical_loss = df_plat_data_charging_volume_1[
+        ['merchant_name', 'station_no', 'station_category', 'plat_data_charging_volume', 'rec_cost_elec_cons']].copy()
 
     # 将DF_volume_1中的trans_energy合并到df_electrical_loss，通过station_no匹配
     # 使用left join确保保留df_electrical_loss的所有行
-    df_electrical_loss = pd.merge(df_electrical_loss, DF_volume_1[['station_no', 'plat_data_charging_volume', 'rec_cost_elec_cons']], how='left')
+    df_electrical_loss = pd.merge(df_electrical_loss,
+                                  DF_volume_1[['station_no', 'plat_data_charging_volume', 'rec_cost_elec_cons']],
+                                  how='left')
     print(df_electrical_loss.shape)
     print(df_electrical_loss.info())
 
     # In[425]:
 
     # 填充空值为0并确保为数值型
-    df_electrical_loss['plat_data_charging_volume'] = df_electrical_loss['plat_data_charging_volume'].fillna(0).astype(float)
+    df_electrical_loss['plat_data_charging_volume'] = df_electrical_loss['plat_data_charging_volume'].fillna(0).astype(
+        float)
     df_electrical_loss['rec_cost_elec_cons'] = df_electrical_loss['rec_cost_elec_cons'].fillna(0).astype(float)
     print(df_electrical_loss.shape)
     print(df_electrical_loss.info())
@@ -3177,7 +3213,8 @@ def runkeyStationInternalCompetition():
 
     # In[427]:
 
-    electrical_loss_rank_1, electrical_loss_rank_2, electrical_loss_rank_3 = Rank(df_electrical_loss, 'electrical_loss', 'electrical_loss_rank')
+    electrical_loss_rank_1, electrical_loss_rank_2, electrical_loss_rank_3 = Rank(df_electrical_loss, 'electrical_loss',
+                                                                                  'electrical_loss_rank')
     print(electrical_loss_rank_1.info())
 
     # In[428]:
@@ -3193,34 +3230,43 @@ def runkeyStationInternalCompetition():
 
     # 创建三个表（按充电站类型分类）
     # 高速公共 (df_equip_1)
-    df_equip_1 = success_rate_rank_1[['station_name', 'station_no', 'station_category', 'success_rate', 'success_rate_rank']].copy()
+    df_equip_1 = success_rate_rank_1[
+        ['station_name', 'station_no', 'station_category', 'success_rate', 'success_rate_rank']].copy()
     df_equip_1 = pd.merge(df_equip_1, ky_rank_1[['station_no', '可用率', 'ky_rank']], on='station_no', how='left')
-    df_equip_1 = pd.merge(df_equip_1, electrical_loss_rank_1[['station_no', 'electrical_loss', 'electrical_loss_rank']], on='station_no', how='left')
+    df_equip_1 = pd.merge(df_equip_1, electrical_loss_rank_1[['station_no', 'electrical_loss', 'electrical_loss_rank']],
+                          on='station_no', how='left')
 
     # 城市公共 (df_equip_2)
-    df_equip_2 = success_rate_rank_2[['station_name', 'station_no', 'station_category', 'success_rate', 'success_rate_rank']].copy()
+    df_equip_2 = success_rate_rank_2[
+        ['station_name', 'station_no', 'station_category', 'success_rate', 'success_rate_rank']].copy()
     df_equip_2 = pd.merge(df_equip_2, ky_rank_2[['station_no', '可用率', 'ky_rank']], on='station_no', how='left')
-    df_equip_2 = pd.merge(df_equip_2, electrical_loss_rank_2[['station_no', 'electrical_loss', 'electrical_loss_rank']], on='station_no', how='left')
+    df_equip_2 = pd.merge(df_equip_2, electrical_loss_rank_2[['station_no', 'electrical_loss', 'electrical_loss_rank']],
+                          on='station_no', how='left')
 
     # 重卡专用 (df_equip_3)
-    df_equip_3 = success_rate_rank_3[['station_name', 'station_no', 'station_category', 'success_rate', 'success_rate_rank']].copy()
+    df_equip_3 = success_rate_rank_3[
+        ['station_name', 'station_no', 'station_category', 'success_rate', 'success_rate_rank']].copy()
     df_equip_3 = pd.merge(df_equip_3, ky_rank_3[['station_no', '可用率', 'ky_rank']], on='station_no', how='left')
-    df_equip_3 = pd.merge(df_equip_3, electrical_loss_rank_3[['station_no', 'electrical_loss', 'electrical_loss_rank']], on='station_no', how='left')
+    df_equip_3 = pd.merge(df_equip_3, electrical_loss_rank_3[['station_no', 'electrical_loss', 'electrical_loss_rank']],
+                          on='station_no', how='left')
 
     # 设置均等权重 (三个指标权重均为1/3)
     weights = np.array([1 / 3, 1 / 3, 1 / 3])
 
     # 分别对三类充电站进行TOPSIS评价
     # 高速公共
-    topsis_1 = cal_topsis(df_equip_1[['station_no', 'success_rate', '可用率', 'electrical_loss']].copy(), 'station_no', weights)
+    topsis_1 = cal_topsis(df_equip_1[['station_no', 'success_rate', '可用率', 'electrical_loss']].copy(), 'station_no',
+                          weights)
     df_equip_1 = pd.merge(df_equip_1, topsis_1[['station_no', '综合得分(调整)', '排名']], on='station_no', how='left')
 
     # 城市公共
-    topsis_2 = cal_topsis(df_equip_2[['station_no', 'success_rate', '可用率', 'electrical_loss']].copy(), 'station_no', weights)
+    topsis_2 = cal_topsis(df_equip_2[['station_no', 'success_rate', '可用率', 'electrical_loss']].copy(), 'station_no',
+                          weights)
     df_equip_2 = pd.merge(df_equip_2, topsis_2[['station_no', '综合得分(调整)', '排名']], on='station_no', how='left')
 
     # 重卡专用
-    topsis_3 = cal_topsis(df_equip_3[['station_no', 'success_rate', '可用率', 'electrical_loss']].copy(), 'station_no', weights)
+    topsis_3 = cal_topsis(df_equip_3[['station_no', 'success_rate', '可用率', 'electrical_loss']].copy(), 'station_no',
+                          weights)
     df_equip_3 = pd.merge(df_equip_3, topsis_3[['station_no', '综合得分(调整)', '排名']], on='station_no', how='left')
 
     # 现在三个数据框都新增了最后两列：综合得分(调整)和排名
@@ -3311,7 +3357,8 @@ def runkeyStationInternalCompetition():
             "yAxisName": "",
             "markLineName": "平均值",
             "xAxis": str(avg_dict[source_name]["设备质量得分"]),
-            "remark": ["设备质量得分对一次成功率、设备可用率、电量损耗三个指标采用均权法赋权，再通过划定最优、最劣参考基准并计算相对距离的方式量化评分。"]
+            "remark": [
+                "设备质量得分对一次成功率、设备可用率、电量损耗三个指标采用均权法赋权，再通过划定最优、最劣参考基准并计算相对距离的方式量化评分。"]
         })
 
         # 一次成功率
@@ -3327,7 +3374,8 @@ def runkeyStationInternalCompetition():
             "yAxisName": "%",
             "markLineName": "平均值",
             "xAxis": str(avg_dict[source_name]["一次成功率"]),
-            "remark": ["设备质量得分对一次成功率、设备可用率、电量损耗三个指标采用均权法赋权，再通过划定最优、最劣参考基准并计算相对距离的方式量化评分。"]
+            "remark": [
+                "设备质量得分对一次成功率、设备可用率、电量损耗三个指标采用均权法赋权，再通过划定最优、最劣参考基准并计算相对距离的方式量化评分。"]
         })
 
         # 设备可用率
@@ -3343,7 +3391,8 @@ def runkeyStationInternalCompetition():
             "yAxisName": "%",
             "markLineName": "平均值",
             "xAxis": str(avg_dict[source_name]["设备可用率"]),
-            "remark": ["设备质量得分对一次成功率、设备可用率、电量损耗三个指标采用均权法赋权，再通过划定最优、最劣参考基准并计算相对距离的方式量化评分。"]
+            "remark": [
+                "设备质量得分对一次成功率、设备可用率、电量损耗三个指标采用均权法赋权，再通过划定最优、最劣参考基准并计算相对距离的方式量化评分。"]
         })
 
         # 电量损耗
@@ -3359,7 +3408,8 @@ def runkeyStationInternalCompetition():
             "yAxisName": "%",
             "markLineName": "平均值",
             "xAxis": str(avg_dict[source_name]["电量损耗"]),
-            "remark": ["设备质量得分对一次成功率、设备可用率、电量损耗三个指标采用均权法赋权，再通过划定最优、最劣参考基准并计算相对距离的方式量化评分。"]
+            "remark": [
+                "设备质量得分对一次成功率、设备可用率、电量损耗三个指标采用均权法赋权，再通过划定最优、最劣参考基准并计算相对距离的方式量化评分。"]
         })
 
         return bar_chart_data
@@ -3422,8 +3472,8 @@ def runkeyStationInternalCompetition():
             "month": M  # 添加月份列
         })
 
-    # 创建最终DataFrame
-    Database_Table7 = pd.DataFrame(final_data)
+    # 创建最终DataFrame；即使 final_data 为空，也保留表结构
+    Database_Table7 = pd.DataFrame(final_data, columns=['siteNum', 'options', 'BarChartData', 'month'])
 
     # 输出结果
     Database_Table7
@@ -3499,38 +3549,32 @@ def runkeyStationInternalCompetition():
 
     # In[436]:
 
-    get_days_in_month(M)
+    sql = """
+        SELECT
+          pue.*,
+          cs.station_category
+        FROM dp_pue_capacity_utilization pue
+        LEFT JOIN charging_station cs
+          ON pue.station_code COLLATE utf8mb4_unicode_ci
+          = cs.station_no COLLATE utf8mb4_unicode_ci
+        WHERE pue.data_category = '四川电动'
+          AND cs.operation_status IN ('投运','停运')
+        """
+    DF_pue_2 = SQL(sql)
 
-    # 查看station_capacity为0的行数
-    zero_capacity_count = len(DF_cba_org_data[DF_cba_org_data['station_capacity'] == 0])
-    print(zero_capacity_count)
-
-    # In[437]:
-
-    DF_cba_org_data['pue'] = DF_cba_org_data['plat_data_charging_volume'].astype(float) / DF_cba_org_data['station_capacity'].astype(float) / 24 / get_days_in_month(M)
-
-    # 将pue列中的inf和-inf替换为0
-    DF_cba_org_data['pue'] = DF_cba_org_data['pue'].replace([np.inf, -np.inf], 0)
-
-    # In[438]:
-
-    DF_pue_1 = DF_cba_org_data[['station_no', 'pue']]
-
-    # In[439]:
-
-    DF_pue_1 = DF_pue_1.iloc[:, 1:]
-
-    # In[440]:
-
-    DF_pue_2 = pd.merge(DF_SCDD, DF_pue_1, on='station_no', how='left')
-
-    # In[441]:
-
-    DF_pue_2['pue'] = DF_pue_2['pue'].fillna(0)
-
-    # In[442]:
-
-    DF_pue_2['pue'] = (DF_pue_2['pue'] * 100).astype(float)
+    # 容量利用率表按月保存数据；同站同月重复时保留最后写入的一条。
+    DF_pue_2 = DF_pue_2[DF_pue_2['month'].astype(str) == M].copy()
+    DF_pue_2 = (
+        DF_pue_2.sort_values('id')
+        .drop_duplicates(subset=['station_code', 'month'], keep='last')
+        .rename(columns={
+            'station_code': 'station_no',
+            'capacity_utilization_rate': 'pue'
+        })
+    )
+    DF_pue_2.loc[DF_pue_2['station_category'] == '高速', 'station_category'] = '高速公共'
+    # capacity_utilization_rate 已经是百分数（例如 10.87 表示 10.87%），直接使用。
+    DF_pue_2['pue'] = pd.to_numeric(DF_pue_2['pue'], errors='coerce').fillna(0)
 
     # In[443]:
 
@@ -3548,13 +3592,14 @@ def runkeyStationInternalCompetition():
     sql_station = f"""
     select 
         cs.station_no,
+        cs.station_name,
         cs.station_category,
-        (cs.dc_charge_point_count + cs.ac_charge_point_count) as point_count,
+        (IFNULL(cs.dc_charge_point_count, 0) + IFNULL(cs.ac_charge_point_count, 0)) as point_count,
         cs.operation_status 
     from charging_station cs
     LEFT JOIN rec_merchant rm ON cs.property_owner_merhant_id = rm.merchant_id
-    where rm.merchant_name = '国网电动汽车服务（四川）有限公司'
-        and cs.operation_status in ('投运')
+    where cs.merchant_nature = '电动公司'
+        and cs.operation_status in ('投运', '停运')
     """
 
     sql_orders = f"""
@@ -3568,6 +3613,7 @@ def runkeyStationInternalCompetition():
     # 分别获取DataFrame
     DF_station = SQL(sql_station)
     DF_orders = SQL(sql_orders)
+    DF_station.loc[DF_station['station_category'] == '高速', 'station_category'] = '高速公共'
 
     # 在Notebook中进行左连接
     DF_time = DF_station.merge(
@@ -3578,7 +3624,7 @@ def runkeyStationInternalCompetition():
     )
 
     # 确保列名正确
-    DF_time = DF_time[['station_no', 'station_category', 'point_count', 'operation_status',
+    DF_time = DF_time[['station_no', 'station_name', 'station_category', 'point_count', 'operation_status',
                        'charging_station_no', 'charging_start_time', 'charging_end_time']]
 
     print(DF_time.info())
@@ -3590,7 +3636,9 @@ def runkeyStationInternalCompetition():
     # In[447]:
 
     DF_time_1 = DF_time_1.copy()
-    DF_time_1['charging_time'] = DF_time_1['charging_end_time'].apply(lambda x: datetime.strptime(str(x), "%Y-%m-%d %H:%M:%S")) - DF_time_1['charging_start_time'].apply(lambda x: datetime.strptime(str(x), "%Y-%m-%d %H:%M:%S"))
+    DF_time_1['charging_time'] = DF_time_1['charging_end_time'].apply(
+        lambda x: datetime.strptime(str(x), "%Y-%m-%d %H:%M:%S")) - DF_time_1['charging_start_time'].apply(
+        lambda x: datetime.strptime(str(x), "%Y-%m-%d %H:%M:%S"))
 
     # In[448]:
 
@@ -3624,16 +3672,22 @@ def runkeyStationInternalCompetition():
     # In[452]:
 
     # 计算时长利用率
-    DF_time_2['charging_time_rate'] = DF_time_2['total_charging_time'] / (DF_time_2['total_point_count'] * 24 * days_in_month)
+    DF_time_2['charging_time_rate'] = DF_time_2['total_charging_time'] / (
+                DF_time_2['total_point_count'] * 24 * days_in_month)
 
     # In[453]:
 
-    DF_time_2 = pd.merge(DF_SCDD, DF_time_2, on='station_no', how='left')
+    DF_time_2 = pd.merge(
+        DF_station[['station_no', 'station_name', 'station_category']],
+        DF_time_2,
+        on='station_no',
+        how='left'
+    )
 
     # In[454]:
 
     # 只保留指定的列，其他列会被自动删除
-    DF_time_2 = DF_time_2[['merchant_name', 'station_no', 'station_name', 'station_category', 'charging_time_rate']]
+    DF_time_2 = DF_time_2[['station_no', 'station_name', 'station_category', 'charging_time_rate']]
 
     # In[455]:
     # 第一步：将无穷大/无穷小值替换为0
@@ -3647,7 +3701,8 @@ def runkeyStationInternalCompetition():
 
     # In[457]:
 
-    charging_time_rate_1, charging_time_rate_2, charging_time_rate_3 = Rank(DF_time_2, 'charging_time_rate', 'charging_time_rate_rank')
+    charging_time_rate_1, charging_time_rate_2, charging_time_rate_3 = Rank(DF_time_2, 'charging_time_rate',
+                                                                            'charging_time_rate_rank')
 
     # In[458]:
 
@@ -3657,15 +3712,45 @@ def runkeyStationInternalCompetition():
 
     # In[459]:
 
-    # 定义需要排除的station_no列表
-    exclude_stations = ["300003000100002472", "300003000100002473", "300003013200011", "300003013200099", "300003013200108"]
+    sql_gun_charging_volume = f"""
+    SELECT
+        cs.station_no,
+        cs.station_name,
+        cs.station_category,
+        IFNULL(org.plat_data_charging_volume, 0) AS plat_data_charging_volume,
+        (IFNULL(cs.dc_charge_point_count, 0) + IFNULL(cs.ac_charge_point_count, 0)) AS point_count
+    FROM charging_station cs
+    LEFT JOIN (
+        SELECT
+            station_no,
+            SUM(IFNULL(plat_data_charging_volume, 0)) AS plat_data_charging_volume
+        FROM station_cba_org_data
+        WHERE cba_month = '{M}'
+        GROUP BY station_no
+    ) org ON cs.station_no = org.station_no
+    WHERE cs.merchant_nature = '电动公司'
+      AND cs.operation_status IN ('投运', '停运')
+    """
+    df_gun_charging_volume = SQL(sql_gun_charging_volume)
+    df_gun_charging_volume.loc[
+        df_gun_charging_volume['station_category'] == '高速', 'station_category'
+    ] = '高速公共'
+    df_gun_charging_volume['plat_data_charging_volume'] = pd.to_numeric(
+        df_gun_charging_volume['plat_data_charging_volume'], errors='coerce'
+    ).fillna(0)
+    df_gun_charging_volume['point_count'] = pd.to_numeric(
+        df_gun_charging_volume['point_count'], errors='coerce'
+    ).fillna(0)
+    df_gun_charging_volume['daily_charge_per_point'] = np.where(
+        df_gun_charging_volume['point_count'] > 0,
+        df_gun_charging_volume['plat_data_charging_volume'] /
+        (days_in_month * df_gun_charging_volume['point_count']),
+        0
+    )
 
-    # 筛选出不在排除列表中的行，保存到df_gun_charging_volume
-    df_gun_charging_volume = basic2[~basic2['station_no'].isin(exclude_stations)].copy()
-
-    df_gun_charging_volume['daily_charge_per_point'] = df_gun_charging_volume['daily_charge_per_point'].fillna(0)
-
-    gun_charging_volume_rank_1, gun_charging_volume_rank_2, gun_charging_volume_rank_3 = Rank(df_gun_charging_volume, 'daily_charge_per_point', 'daily_charge_per_point_rank')
+    gun_charging_volume_rank_1, gun_charging_volume_rank_2, gun_charging_volume_rank_3 = Rank(df_gun_charging_volume,
+                                                                                              'daily_charge_per_point',
+                                                                                              'daily_charge_per_point_rank')
 
     # In[460]:
 
@@ -3678,8 +3763,8 @@ def runkeyStationInternalCompetition():
     # In[461]:
 
     # 计算必要的统计量
-    pue_mean = DF_cba_org_data['pue'].mean()  # 功率利用率平均值
-    pue_max = DF_cba_org_data['pue'].max()  # 功率利用率最大值
+    pue_mean = DF_pue_2['pue'].mean()  # 功率利用率平均值
+    pue_max = DF_pue_2['pue'].max()  # 功率利用率最大值
     print(pue_mean)
     print(pue_max)
     # 计算功率效能比
@@ -3687,21 +3772,13 @@ def runkeyStationInternalCompetition():
     # 处理分母为0的情况
     if pue_max - pue_mean == 0:
         # 当最大值等于平均值时，所有值相同，效能比设为0
-        DF_cba_org_data['pue_max_mean'] = 0.0
+        DF_pue_2['pue_max_mean'] = 0.0
     else:
-        DF_cba_org_data['pue_max_mean'] = (DF_cba_org_data['pue'] - pue_mean) / (pue_max - pue_mean)
+        DF_pue_2['pue_max_mean'] = (DF_pue_2['pue'] - pue_mean) / (pue_max - pue_mean)
 
-    # DF_cba_org_data表中有两列station_no，此处作相应处理，只保留一列
-    # 获取所有列名
-    columns = DF_cba_org_data.columns.tolist()
-    # 找到第一个名为 'station_no' 的列索引
-    station_no_index = columns.index('station_no')
-
-    # 创建新表，只包含第一列 station_no 和其他需要的列
-    df_pue_max_mean = DF_cba_org_data.iloc[:, [station_no_index] + [columns.index('station_category'), columns.index('station_name'), columns.index('pue_max_mean')]].copy()
-
-    # 重命名列，避免混淆
-    df_pue_max_mean.columns = ['station_no', 'station_category', 'station_name', 'pue_max_mean']
+    df_pue_max_mean = DF_pue_2[
+        ['station_no', 'station_category', 'station_name', 'pue_max_mean']
+    ].copy()
 
     df_pue_max_mean['pue_max_mean'] = df_pue_max_mean['pue_max_mean'].fillna(0)
 
@@ -3712,7 +3789,8 @@ def runkeyStationInternalCompetition():
 
     # In[463]:
 
-    pue_max_mean_rank_1, pue_max_mean_rank_2, pue_max_mean_rank_3 = Rank(df_pue_max_mean, 'pue_max_mean', 'pue_max_mean_rank')
+    pue_max_mean_rank_1, pue_max_mean_rank_2, pue_max_mean_rank_3 = Rank(df_pue_max_mean, 'pue_max_mean',
+                                                                         'pue_max_mean_rank')
 
     # In[464]:
 
@@ -3728,21 +3806,30 @@ def runkeyStationInternalCompetition():
     # 创建三个表（按充电站类型分类）
     # 高速公共 (df_use_1)
     df_use_1 = pue_rank_1[['station_name', 'station_no', 'station_category', 'pue', 'pue_rank']].copy()
-    df_use_1 = pd.merge(df_use_1, charging_time_rate_1[['station_no', 'charging_time_rate', 'charging_time_rate_rank']], on='station_no', how='left')
-    df_use_1 = pd.merge(df_use_1, gun_charging_volume_rank_1[['station_no', 'daily_charge_per_point', 'daily_charge_per_point_rank']], on='station_no', how='left')
-    df_use_1 = pd.merge(df_use_1, pue_max_mean_rank_1[['station_no', 'pue_max_mean', 'pue_max_mean_rank']], on='station_no', how='left')
+    df_use_1 = pd.merge(df_use_1, charging_time_rate_1[['station_no', 'charging_time_rate', 'charging_time_rate_rank']],
+                        on='station_no', how='left')
+    df_use_1 = pd.merge(df_use_1, gun_charging_volume_rank_1[
+        ['station_no', 'daily_charge_per_point', 'daily_charge_per_point_rank']], on='station_no', how='left')
+    df_use_1 = pd.merge(df_use_1, pue_max_mean_rank_1[['station_no', 'pue_max_mean', 'pue_max_mean_rank']],
+                        on='station_no', how='left')
 
     # 城市公共 (df_use_2)
     df_use_2 = pue_rank_2[['station_name', 'station_no', 'station_category', 'pue', 'pue_rank']].copy()
-    df_use_2 = pd.merge(df_use_2, charging_time_rate_2[['station_no', 'charging_time_rate', 'charging_time_rate_rank']], on='station_no', how='left')
-    df_use_2 = pd.merge(df_use_2, gun_charging_volume_rank_2[['station_no', 'daily_charge_per_point', 'daily_charge_per_point_rank']], on='station_no', how='left')
-    df_use_2 = pd.merge(df_use_2, pue_max_mean_rank_2[['station_no', 'pue_max_mean', 'pue_max_mean_rank']], on='station_no', how='left')
+    df_use_2 = pd.merge(df_use_2, charging_time_rate_2[['station_no', 'charging_time_rate', 'charging_time_rate_rank']],
+                        on='station_no', how='left')
+    df_use_2 = pd.merge(df_use_2, gun_charging_volume_rank_2[
+        ['station_no', 'daily_charge_per_point', 'daily_charge_per_point_rank']], on='station_no', how='left')
+    df_use_2 = pd.merge(df_use_2, pue_max_mean_rank_2[['station_no', 'pue_max_mean', 'pue_max_mean_rank']],
+                        on='station_no', how='left')
 
     # 重卡专用 (df_use_3)
     df_use_3 = pue_rank_3[['station_name', 'station_no', 'station_category', 'pue', 'pue_rank']].copy()
-    df_use_3 = pd.merge(df_use_3, charging_time_rate_3[['station_no', 'charging_time_rate', 'charging_time_rate_rank']], on='station_no', how='left')
-    df_use_3 = pd.merge(df_use_3, gun_charging_volume_rank_3[['station_no', 'daily_charge_per_point', 'daily_charge_per_point_rank']], on='station_no', how='left')
-    df_use_3 = pd.merge(df_use_3, pue_max_mean_rank_3[['station_no', 'pue_max_mean', 'pue_max_mean_rank']], on='station_no', how='left')
+    df_use_3 = pd.merge(df_use_3, charging_time_rate_3[['station_no', 'charging_time_rate', 'charging_time_rate_rank']],
+                        on='station_no', how='left')
+    df_use_3 = pd.merge(df_use_3, gun_charging_volume_rank_3[
+        ['station_no', 'daily_charge_per_point', 'daily_charge_per_point_rank']], on='station_no', how='left')
+    df_use_3 = pd.merge(df_use_3, pue_max_mean_rank_3[['station_no', 'pue_max_mean', 'pue_max_mean_rank']],
+                        on='station_no', how='left')
 
     # 设置均等权重（四个指标权重均为1/4）
     weights = np.array([0.25, 0.25, 0.25, 0.25])
@@ -3754,7 +3841,9 @@ def runkeyStationInternalCompetition():
         .replace([np.inf, -np.inf], 0)
         .fillna(0)
     )
-    topsis_1 = cal_topsis(df_use_1[['station_no', 'pue', 'charging_time_rate', 'daily_charge_per_point', 'pue_max_mean']].copy(), 'station_no', weights)
+    topsis_1 = cal_topsis(
+        df_use_1[['station_no', 'pue', 'charging_time_rate', 'daily_charge_per_point', 'pue_max_mean']].copy(),
+        'station_no', weights)
     df_use_1 = pd.merge(df_use_1, topsis_1[['station_no', '综合得分(调整)', '排名']], on='station_no', how='left')
 
     # 城市公共
@@ -3763,7 +3852,9 @@ def runkeyStationInternalCompetition():
         .replace([np.inf, -np.inf], 0)
         .fillna(0)
     )
-    topsis_2 = cal_topsis(df_use_2[['station_no', 'pue', 'charging_time_rate', 'daily_charge_per_point', 'pue_max_mean']].copy(), 'station_no', weights)
+    topsis_2 = cal_topsis(
+        df_use_2[['station_no', 'pue', 'charging_time_rate', 'daily_charge_per_point', 'pue_max_mean']].copy(),
+        'station_no', weights)
     df_use_2 = pd.merge(df_use_2, topsis_2[['station_no', '综合得分(调整)', '排名']], on='station_no', how='left')
 
     # 重卡专用
@@ -3772,7 +3863,9 @@ def runkeyStationInternalCompetition():
         .replace([np.inf, -np.inf], 0)
         .fillna(0)
     )
-    topsis_3 = cal_topsis(df_use_3[['station_no', 'pue', 'charging_time_rate', 'daily_charge_per_point', 'pue_max_mean']].copy(), 'station_no', weights)
+    topsis_3 = cal_topsis(
+        df_use_3[['station_no', 'pue', 'charging_time_rate', 'daily_charge_per_point', 'pue_max_mean']].copy(),
+        'station_no', weights)
     df_use_3 = pd.merge(df_use_3, topsis_3[['station_no', '综合得分(调整)', '排名']], on='station_no', how='left')
 
     # 现在三个数据框都新增了最后两列：综合得分(调整)和排名
@@ -3968,7 +4061,8 @@ def runkeyStationInternalCompetition():
     }
 
     # 将options转换为JSON字符串
-    options_json = json.dumps(["使用效率得分", "功率利用率", "时长利用率", "单枪日均充电量", "功率效能比"], ensure_ascii=False)
+    options_json = json.dumps(["使用效率得分", "功率利用率", "时长利用率", "单枪日均充电量", "功率效能比"],
+                              ensure_ascii=False)
 
     # 生成最终数据
     final_data = []
@@ -4003,8 +4097,8 @@ def runkeyStationInternalCompetition():
             "month": M  # 添加月份列
         })
 
-    # 创建最终DataFrame
-    Database_Table8 = pd.DataFrame(final_data)
+    # 创建最终DataFrame；即使 final_data 为空，也保留表结构，避免主键校验报错
+    Database_Table8 = pd.DataFrame(final_data, columns=['siteNum', 'options', 'BarChartData', 'month'])
 
     # 输出结果
     Database_Table8
@@ -4083,44 +4177,59 @@ def runkeyStationInternalCompetition():
     df_operation_1 = df_operation_1.rename(columns={'综合得分(调整)': '经济效益'})
 
     # 添加设备质量得分
-    df_operation_1 = pd.merge(df_operation_1, df_equip_1[['station_no', '综合得分(调整)']].rename(columns={'综合得分(调整)': '设备质量'}), on='station_no', how='left')
+    df_operation_1 = pd.merge(df_operation_1, df_equip_1[['station_no', '综合得分(调整)']].rename(
+        columns={'综合得分(调整)': '设备质量'}), on='station_no', how='left')
 
     # 添加使用效率得分
-    df_operation_1 = pd.merge(df_operation_1, df_use_1[['station_no', '综合得分(调整)']].rename(columns={'综合得分(调整)': '使用效率'}), on='station_no', how='left')
+    df_operation_1 = pd.merge(df_operation_1,
+                              df_use_1[['station_no', '综合得分(调整)']].rename(columns={'综合得分(调整)': '使用效率'}),
+                              on='station_no', how='left')
 
     # 使用TOPSIS计算最终评分
-    topsis_operation_1 = cal_topsis(df_operation_1[['station_no', '经济效益', '设备质量', '使用效率']].copy(), 'station_no', np.array([1 / 3, 1 / 3, 1 / 3]))
+    topsis_operation_1 = cal_topsis(df_operation_1[['station_no', '经济效益', '设备质量', '使用效率']].copy(),
+                                    'station_no', np.array([1 / 3, 1 / 3, 1 / 3]))
 
     # 添加最终评分和排名
-    df_operation_1 = pd.merge(df_operation_1, topsis_operation_1[['station_no', '综合得分(调整)', '排名']], on='station_no', how='left')
+    df_operation_1 = pd.merge(df_operation_1, topsis_operation_1[['station_no', '综合得分(调整)', '排名']],
+                              on='station_no', how='left')
 
     # 2、城市公共
     df_operation_2 = df_eco2[['station_no', 'station_name', 'station_category', '综合得分(调整)']].copy()
     df_operation_2 = df_operation_2.rename(columns={'综合得分(调整)': '经济效益'})
 
     # 添加设备质量得分
-    df_operation_2 = pd.merge(df_operation_2, df_equip_2[['station_no', '综合得分(调整)']].rename(columns={'综合得分(调整)': '设备质量'}), on='station_no', how='left')
+    df_operation_2 = pd.merge(df_operation_2, df_equip_2[['station_no', '综合得分(调整)']].rename(
+        columns={'综合得分(调整)': '设备质量'}), on='station_no', how='left')
 
     # 添加使用效率得分
-    df_operation_2 = pd.merge(df_operation_2, df_use_2[['station_no', '综合得分(调整)']].rename(columns={'综合得分(调整)': '使用效率'}), on='station_no', how='left')
+    df_operation_2 = pd.merge(df_operation_2,
+                              df_use_2[['station_no', '综合得分(调整)']].rename(columns={'综合得分(调整)': '使用效率'}),
+                              on='station_no', how='left')
 
     # 使用TOPSIS计算最终评分
-    topsis_operation_2 = cal_topsis(df_operation_2[['station_no', '经济效益', '设备质量', '使用效率']].copy(), 'station_no', np.array([1 / 3, 1 / 3, 1 / 3]))
+    topsis_operation_2 = cal_topsis(df_operation_2[['station_no', '经济效益', '设备质量', '使用效率']].copy(),
+                                    'station_no', np.array([1 / 3, 1 / 3, 1 / 3]))
 
     # 添加最终评分和排名
-    df_operation_2 = pd.merge(df_operation_2, topsis_operation_2[['station_no', '综合得分(调整)', '排名']], on='station_no', how='left')
+    df_operation_2 = pd.merge(df_operation_2, topsis_operation_2[['station_no', '综合得分(调整)', '排名']],
+                              on='station_no', how='left')
 
     # 重复相同过程处理重卡专用类型
     df_operation_3 = df_eco3[['station_no', 'station_name', 'station_category', '综合得分(调整)']].copy()
     df_operation_3 = df_operation_3.rename(columns={'综合得分(调整)': '经济效益'})
 
-    df_operation_3 = pd.merge(df_operation_3, df_equip_3[['station_no', '综合得分(调整)']].rename(columns={'综合得分(调整)': '设备质量'}), on='station_no', how='left')
+    df_operation_3 = pd.merge(df_operation_3, df_equip_3[['station_no', '综合得分(调整)']].rename(
+        columns={'综合得分(调整)': '设备质量'}), on='station_no', how='left')
 
-    df_operation_3 = pd.merge(df_operation_3, df_use_3[['station_no', '综合得分(调整)']].rename(columns={'综合得分(调整)': '使用效率'}), on='station_no', how='left')
+    df_operation_3 = pd.merge(df_operation_3,
+                              df_use_3[['station_no', '综合得分(调整)']].rename(columns={'综合得分(调整)': '使用效率'}),
+                              on='station_no', how='left')
 
-    topsis_operation_3 = cal_topsis(df_operation_3[['station_no', '经济效益', '设备质量', '使用效率']].copy(), 'station_no', np.array([1 / 3, 1 / 3, 1 / 3]))
+    topsis_operation_3 = cal_topsis(df_operation_3[['station_no', '经济效益', '设备质量', '使用效率']].copy(),
+                                    'station_no', np.array([1 / 3, 1 / 3, 1 / 3]))
 
-    df_operation_3 = pd.merge(df_operation_3, topsis_operation_3[['station_no', '综合得分(调整)', '排名']], on='station_no', how='left')
+    df_operation_3 = pd.merge(df_operation_3, topsis_operation_3[['station_no', '综合得分(调整)', '排名']],
+                              on='station_no', how='left')
 
     # 查看结果
     print(df_operation_1.shape)
@@ -4446,8 +4555,8 @@ def runkeyStationInternalCompetition():
             "illustrate": json.dumps(illustrate, ensure_ascii=False)  # 转换为JSON字符串
         })
 
-    # 创建最终DataFrame
-    Database_Table10 = pd.DataFrame(final_data)
+    # 创建最终DataFrame；即使 final_data 为空，也保留表结构
+    Database_Table10 = pd.DataFrame(final_data, columns=['siteNum', 'radarData', 'indicator', 'barChartData', 'illustrate'])
     Database_Table10['month'] = M
 
     Database_Table10
@@ -4522,9 +4631,10 @@ def runkeyStationInternalCompetition():
 
     # In[479]:
 
-    highspeed_count = len(DF_SCDD[DF_SCDD['station_category'] == '高速公共'])
-    urban_count = len(DF_SCDD[DF_SCDD['station_category'] == '城市公共'])
-    truck_count = len(DF_SCDD[DF_SCDD['station_category'] == '重卡专用'])
+    # 站点数量与运营画像排名使用同一批数据，确保排名分母与顶部站点总数一致
+    highspeed_count = len(df_operation_1)
+    urban_count = len(df_operation_2)
+    truck_count = len(df_operation_3)
 
     # 打印结果
     print(f"高速公共: {highspeed_count}座")
@@ -4829,8 +4939,3 @@ def runkeyStationInternalCompetition():
     )
 
     # In[ ]:
-
-
-
-
-
