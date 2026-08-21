@@ -16,6 +16,11 @@ def runindustryAndProvincialCompany():
     P_M = P_M[:4] + '-' + P_M[4:]
     print(M, previous_month_str, year, last_year, last_year_month_str, P_M)
 
+    def get_month_value(dataframe, month, column, default=0):
+        """Return a month's metric, using a neutral value when the month is absent."""
+        values = dataframe.loc[dataframe['month'] == month, column]
+        return round(values.iloc[0], 2) if not values.empty else default
+
 
     def generate_months(start_month, num_months):
         """
@@ -177,69 +182,37 @@ def runindustryAndProvincialCompany():
 
     Basic_Data['station_capacity'] = Basic_Data['station_capacity'].fillna(0)
 
-    # ### 四类站点归属单位类型划分
+    # ### 产业单位及省公司站点归属划分
 
     # In[19]:
 
 
     Basic_Data['归属单位'] = '暂无'
 
-    # 社会站
-    condition1 = (
-        # 条件1：plat_access_mode在指定的"社会站相关"列表中
-            Basic_Data['plat_access_mode'].isin(['三方', '社会商户', '第三方', '第三方单位', '第三方合作']) |
+    # charging_station.merchant_nature 为“产业单位”或“综合能源”
+    Basic_Data.loc[
+        Basic_Data['merchant_nature'].isin(['产业单位', '综合能源']),
+        '归属单位'
+    ] = '产业单位'
 
-            # 条件2：plat_access_mode为空值（对应SQL的is null）
-            Basic_Data['plat_access_mode'].isna() |
+    # charging_station.merchant_nature 为“电力公司”时对应页面内部的主业单位（省公司）
+    Basic_Data.loc[
+        Basic_Data['merchant_nature'] == '电力公司',
+        '归属单位'
+    ] = '主业单位'
 
-            # 条件3：plat_access_mode在产业单位列表中且access_method为社会站模型
-            (Basic_Data['plat_access_mode'].isin(['产业单位', '产业单位代运营', '代运营', '省公司代运营', '综合能源']) &
-             (Basic_Data['access_method'] == '社会站模型'))
-    )
-    Basic_Data.loc[condition1, '归属单位'] = '社会站'
-
-    # 产业单位
-    condition2 = (
-        # 第一个条件：plat_access_mode在指定列表中，且access_method不等于'社会站模型'
-            (Basic_Data['plat_access_mode'].isin(['产业单位', '产业单位代运营', '代运营', '省公司代运营', '综合能源'])) &
-            (Basic_Data['access_method'] != '社会站模型') &
-
-            # 第二个条件：merchant_name不包含'供电公司'，或者等于特定值
-            ((~Basic_Data['merchant_name'].str.contains('供电公司', na=False)) |
-             (Basic_Data['merchant_name'] == '国网广元供电公司（产业单位）')) &
-
-            # 第三个条件：merchant_name不包含'供电分公司'
-            (~Basic_Data['merchant_name'].str.contains('供电分公司', na=False))
-    )
-    Basic_Data.loc[condition2, '归属单位'] = '产业单位'
-
-    # 主业单位
-    condition3 = (
-        # 第一个主要条件：plat_access_mode在指定列表中且access_method不等于社会站模型
-            (Basic_Data['plat_access_mode'].isin(['产业单位', '产业单位代运营', '代运营', '省公司代运营', '综合能源'])) &
-            (Basic_Data['access_method'] != '社会站模型') &
-
-            # 第二个主要条件：满足以下两个子条件之一
-            (
-                # 子条件1：merchant_name包含'供电公司'且不等于特定值
-                    (Basic_Data['merchant_name'].str.contains('供电公司', na=False) &
-                     (Basic_Data['merchant_name'] != '国网广元供电公司（产业单位）')) |
-
-                    # 子条件2：merchant_name包含'供电分公司'
-                    Basic_Data['merchant_name'].str.contains('供电分公司', na=False)
-            )
-    )
-    Basic_Data.loc[condition3, '归属单位'] = '主业单位'
-
-    # 自营站点
-    condition4 = Basic_Data['plat_access_mode'].isin(['电动公司'])
-    Basic_Data.loc[condition4, '归属单位'] = '自营站'
+    # 本页只展示产业单位和省公司，其他商户性质不参与后续统计
+    Basic_Data = Basic_Data[
+        Basic_Data['归属单位'].isin(['产业单位', '主业单位'])
+    ].copy()
 
     # In[20]:
 
 
-    print('当前各类型投运站点数量分布情况：\n',
-          Basic_Data[(Basic_Data['commissioning_year_month'] <= M) & (Basic_Data['operation_status'] == '投运')].groupby(by='归属单位').agg({'station_no': 'count'}))
+    print('当前各类型投运及停运站点数量分布情况：\n',
+          Basic_Data[(Basic_Data['commissioning_year_month'] <= M) &
+                     (Basic_Data['operation_status'].isin(['投运', '停运']))]
+          .groupby(by='归属单位').agg({'station_no': 'count'}))
 
     # ### 商户名称规范及合并
 
@@ -271,10 +244,51 @@ def runindustryAndProvincialCompany():
     # 替换1--将未匹配到商户的站点对应商户名称暂时修改为其他
     Basic_Data.loc[Basic_Data['merchant_name'].isna(), 'merchant_name'] = '其他'
 
-    # In[22]:
+    # ## 容量利用率数据读取
 
+    # 新库实际站点表为 charging_station，关联键为 station_no。
+    # 两表排序规则不同，关联时需显式指定 COLLATE。
+    sql3 = """
+    select
+        pue.id,
+        pue.station_code,
+        pue.month,
+        pue.capacity_utilization_rate,
+        cs.city,
+        cs.merchant_nature,
+        rm.merchant_name
+    from dp_pue_capacity_utilization pue
+    left join charging_station cs
+        on pue.station_code collate utf8mb4_general_ci = cs.station_no
+    left join rec_merchant rm
+        on cs.property_owner_merhant_id = rm.merchant_id
+    where cs.merchant_nature in ('产业单位', '综合能源', '电力公司')
+    """
+    PUE_Data = SQL(sql3)
+    PUE_Data['month'] = PUE_Data['month'].astype(str)
+    PUE_Data['capacity_utilization_rate'] = pd.to_numeric(
+        PUE_Data['capacity_utilization_rate'], errors='coerce'
+    )
 
-    set(Basic_Data[Basic_Data['归属单位'] == '自营站']['merchant_name'])
+    # 同一站点同一月份可能有多次维护记录，使用 id 最大的最新值。
+    PUE_Data.sort_values(by='id', inplace=True)
+    PUE_Data.drop_duplicates(subset=['station_code', 'month'], keep='last', inplace=True)
+    PUE_Data.reset_index(drop=True, inplace=True)
+
+    PUE_Data['归属单位'] = PUE_Data['merchant_nature'].map({
+        '产业单位': '产业单位',
+        '综合能源': '产业单位',
+        '电力公司': '主业单位'
+    })
+    PUE_Data.loc[
+        PUE_Data['merchant_name'].isin(merchant_names1),
+        'merchant_name'
+    ] = '巴中和兴电力有限责任公司'
+    PUE_Data.loc[
+        PUE_Data['merchant_name'].isin(merchant_names2),
+        'merchant_name'
+    ] = '四川南充恒通电力有限公司'
+    PUE_Data.loc[PUE_Data['merchant_name'].isna(), 'merchant_name'] = '其他'
 
     # ## 平台订单历史一年数据读取
 
@@ -358,7 +372,7 @@ def runindustryAndProvincialCompany():
     # In[32]:
 
 
-    # 注意，枪数量只看投运，功率利用率、充电量、收入应该看投运+退运
+    # 非金额指标按投运+停运统计，收入指标单独加入退运站点
 
 
     # ### 数据计算
@@ -370,29 +384,31 @@ def runindustryAndProvincialCompany():
     d1 = int(Basic_Data[
                  (Basic_Data['归属单位'] == '产业单位') &
                  (Basic_Data['commissioning_year_month'] <= M) &
-                 (Basic_Data['operation_status'] == '投运')
+                 (Basic_Data['operation_status'].isin(['投运', '停运']))
                  ]['charge_count'].sum())
     print('累计接入充电枪数：', d1)
 
     # 本年功率利用率
-    # 1、获取当前月份及之前投运站点的信息
+    # 1、获取当前月份及之前投运、停运站点的信息
     df1 = Basic_Data[
         (Basic_Data['归属单位'] == '产业单位') &
         (Basic_Data['commissioning_year_month'] <= M) &
-        (Basic_Data['operation_status'].isin(['投运', '退运']))
+        (Basic_Data['operation_status'].isin(['投运', '停运']))
         ][['station_no', 'station_name', 'station_capacity']]
 
     # 2、筛选订单表中当年且当前月份之前的数据
-    df2 = Order_Data[(Order_Data['year'] == '2025') & (Order_Data['ym'] <= M)]
+    df2 = Order_Data[(Order_Data['year'] == str(year)) & (Order_Data['ym'] <= M)]
 
     # 3、按站点编号统计当年各站点的充电量数据
     gb1 = df2.groupby(by='station_no', as_index=False).agg({'trans_energy': 'sum',
                                                             'trans_amount': 'sum'})
-    # 4、匹配产业单位对应站点电量数据
-    df3 = pd.merge(df1[df1['station_capacity'] != 0], gb1[gb1['trans_energy'] != 0], how='left', on='station_no').fillna(0)
-    df3 = df3[df3['trans_energy'] != 0]
-    df3['功率利用率'] = df3['trans_energy'] / (df3['station_capacity'] * total_days * 24)
-    d2 = round(df3['功率利用率'].mean() * 100, 2)
+    # 4、本年功率利用率直接使用新库容量利用率字段
+    pue_year_data = PUE_Data[
+        (PUE_Data['归属单位'] == '产业单位') &
+        (PUE_Data['month'].str[:4] == str(year)) &
+        (PUE_Data['month'] <= M)
+        ]
+    d2 = round(pue_year_data['capacity_utilization_rate'].mean(), 2)
     print('本年功率利用率：', d2)
 
     # 本年累计充电量
@@ -400,8 +416,16 @@ def runindustryAndProvincialCompany():
     d3 = round(df4['trans_energy'].sum() / 10000, 2)
     print('本年累计充电量：', d3)
 
-    # 本年充电收入
-    d4 = round(df4['trans_amount'].sum() / 10000, 2)
+    # 本年充电收入单独统计投运、停运和退运站点
+    income_stations = Basic_Data[
+        (Basic_Data['归属单位'] == '产业单位') &
+        (Basic_Data['commissioning_year_month'] <= M) &
+        (Basic_Data['operation_status'].isin(['投运', '停运', '退运']))
+        ][['station_no']]
+    income_data = pd.merge(
+        income_stations, gb1[['station_no', 'trans_amount']], how='left', on='station_no'
+    ).fillna(0)
+    d4 = round(income_data['trans_amount'].sum() / 10000, 2)
     print('本年充电收入：', d4)
 
     # In[34]:
@@ -445,7 +469,7 @@ def runindustryAndProvincialCompany():
     # In[36]:
 
 
-    # 注意，枪数量只看投运，功率利用率、充电量、收入应该看投运+退运
+    # 非金额指标按投运+停运统计，收入指标单独加入退运站点
 
 
     # ### 数据计算
@@ -457,28 +481,31 @@ def runindustryAndProvincialCompany():
     d1 = int(Basic_Data[
                  (Basic_Data['归属单位'] == '主业单位') &
                  (Basic_Data['commissioning_year_month'] <= M) &
-                 (Basic_Data['operation_status'] == '投运')
+                 (Basic_Data['operation_status'].isin(['投运', '停运']))
                  ]['charge_count'].sum())
     print('累计接入充电枪数：', d1)
 
     # 本年功率利用率
-    # 1、获取当前月份及之前投运站点的信息
+    # 1、获取当前月份及之前投运、停运站点的信息
     df1 = Basic_Data[
         (Basic_Data['归属单位'] == '主业单位') &
         (Basic_Data['commissioning_year_month'] <= M) &
-        (Basic_Data['operation_status'].isin(['投运', '退运']))
+        (Basic_Data['operation_status'].isin(['投运', '停运']))
         ][['station_no', 'station_name', 'station_capacity']]
 
     # 2、筛选订单表中当年且当前月份之前的数据
-    df2 = Order_Data[(Order_Data['year'] == '2025') & (Order_Data['ym'] <= M)]
+    df2 = Order_Data[(Order_Data['year'] == str(year)) & (Order_Data['ym'] <= M)]
 
     # 3、按站点编号统计当年各站点的充电量数据
     gb1 = df2.groupby(by='station_no', as_index=False).agg({'trans_energy': 'sum',
                                                             'trans_amount': 'sum'})
-    # 4、匹配主业单位对应站点电量数据
-    df3 = pd.merge(df1[df1['station_capacity'] != 0], gb1[gb1['trans_energy'] != 0], how='left', on='station_no').fillna(0)
-    df3['功率利用率'] = df3['trans_energy'] / (df3['station_capacity'] * total_days * 24)
-    d2 = round(df3['功率利用率'].mean() * 100, 2)
+    # 4、本年功率利用率直接使用新库容量利用率字段
+    pue_year_data = PUE_Data[
+        (PUE_Data['归属单位'] == '主业单位') &
+        (PUE_Data['month'].str[:4] == str(year)) &
+        (PUE_Data['month'] <= M)
+        ]
+    d2 = round(pue_year_data['capacity_utilization_rate'].mean(), 2)
     print('本年功率利用率：', d2)
 
     # 本年累计充电量
@@ -486,8 +513,16 @@ def runindustryAndProvincialCompany():
     d3 = round(df4['trans_energy'].sum() / 10000, 2)
     print('本年累计充电量：', d3)
 
-    # 本年充电收入
-    d4 = round(df4['trans_amount'].sum() / 10000, 2)
+    # 本年充电收入单独统计投运、停运和退运站点
+    income_stations = Basic_Data[
+        (Basic_Data['归属单位'] == '主业单位') &
+        (Basic_Data['commissioning_year_month'] <= M) &
+        (Basic_Data['operation_status'].isin(['投运', '停运', '退运']))
+        ][['station_no']]
+    income_data = pd.merge(
+        income_stations, gb1[['station_no', 'trans_amount']], how='left', on='station_no'
+    ).fillna(0)
+    d4 = round(income_data['trans_amount'].sum() / 10000, 2)
     print('本年充电收入：', d4)
 
     # In[38]:
@@ -539,7 +574,7 @@ def runindustryAndProvincialCompany():
     df1 = Basic_Data[
         (Basic_Data['归属单位'] == '产业单位') &
         (Basic_Data['commissioning_year_month'] <= M) &
-        (Basic_Data['operation_status'] == '投运')
+        (Basic_Data['operation_status'].isin(['投运', '停运']))
         ][['city', 'charge_count', 'station_no']]
 
     gb1 = df1.groupby(by='city', as_index=False).agg({'charge_count': 'sum'})
@@ -648,7 +683,7 @@ def runindustryAndProvincialCompany():
     df1 = Basic_Data[
         (Basic_Data['归属单位'] == '主业单位') &
         (Basic_Data['commissioning_year_month'] <= M) &
-        (Basic_Data['operation_status'] == '投运')
+        (Basic_Data['operation_status'].isin(['投运', '停运']))
         ][['city', 'charge_count', 'station_no']]
 
     gb1 = df1.groupby(by='city', as_index=False).agg({'charge_count': 'sum'})
@@ -757,7 +792,7 @@ def runindustryAndProvincialCompany():
     df1 = Basic_Data[
         (Basic_Data['归属单位'] == '产业单位') &
         (Basic_Data['commissioning_year_month'] <= M) &
-        (Basic_Data['operation_status'] == '投运')
+        (Basic_Data['operation_status'].isin(['投运', '停运']))
         ][['merchant_name', 'charge_count', 'station_no']]
 
     gb1 = df1.groupby(by='merchant_name', as_index=False).agg({'charge_count': 'sum'})
@@ -866,7 +901,7 @@ def runindustryAndProvincialCompany():
     df1 = Basic_Data[
         (Basic_Data['归属单位'] == '主业单位') &
         (Basic_Data['commissioning_year_month'] <= M) &
-        (Basic_Data['operation_status'] == '投运')
+        (Basic_Data['operation_status'].isin(['投运', '停运']))
         ][['merchant_name', 'charge_count', 'station_no']]
 
     gb1 = df1.groupby(by='merchant_name', as_index=False).agg({'charge_count': 'sum'})
@@ -975,9 +1010,9 @@ def runindustryAndProvincialCompany():
     df1 = Basic_Data[
         (Basic_Data['归属单位'] == '产业单位') &
         (Basic_Data['commissioning_year_month'] <= M) &
-        (Basic_Data['operation_status'] == '投运')
+        (Basic_Data['operation_status'].isin(['投运', '停运']))
         ][['commissioning_year_month', 'charge_count', 'station_no']]
-    # 分组统计每个年月投运的枪数量
+    # 分组统计每个年月投运、停运站点的枪数量
     df2 = df1.groupby(by='commissioning_year_month', as_index=False).agg({'charge_count': 'sum'})
 
     # 将近12个月份升序排序
@@ -1064,9 +1099,9 @@ def runindustryAndProvincialCompany():
     df1 = Basic_Data[
         (Basic_Data['归属单位'] == '主业单位') &
         (Basic_Data['commissioning_year_month'] <= M) &
-        (Basic_Data['operation_status'] == '投运')
+        (Basic_Data['operation_status'].isin(['投运', '停运']))
         ][['commissioning_year_month', 'charge_count', 'station_no']]
-    # 分组统计每个年月投运的枪数量
+    # 分组统计每个年月投运、停运站点的枪数量
     df2 = df1.groupby(by='commissioning_year_month', as_index=False).agg({'charge_count': 'sum'})
 
     # 将近12个月份升序排序
@@ -1155,7 +1190,7 @@ def runindustryAndProvincialCompany():
     df1 = Basic_Data[
         (Basic_Data['归属单位'] == '产业单位') &
         (Basic_Data['commissioning_year_month'] <= M) &
-        (Basic_Data['operation_status'].isin(['投运', '退运']))
+        (Basic_Data['operation_status'].isin(['投运', '停运']))
         ][['city', 'station_no']]
 
     # 本月充电量
@@ -1268,7 +1303,7 @@ def runindustryAndProvincialCompany():
     df1 = Basic_Data[
         (Basic_Data['归属单位'] == '主业单位') &
         (Basic_Data['commissioning_year_month'] <= M) &
-        (Basic_Data['operation_status'].isin(['投运', '退运']))
+        (Basic_Data['operation_status'].isin(['投运', '停运']))
         ][['city', 'station_no']]
 
     # 本月充电量
@@ -1381,7 +1416,7 @@ def runindustryAndProvincialCompany():
     df1 = Basic_Data[
         (Basic_Data['归属单位'] == '产业单位') &
         (Basic_Data['commissioning_year_month'] <= M) &
-        (Basic_Data['operation_status'].isin(['投运', '退运']))
+        (Basic_Data['operation_status'].isin(['投运', '停运']))
         ][['merchant_name', 'station_no']]
 
     # 本月充电量
@@ -1494,7 +1529,7 @@ def runindustryAndProvincialCompany():
     df1 = Basic_Data[
         (Basic_Data['归属单位'] == '主业单位') &
         (Basic_Data['commissioning_year_month'] <= M) &
-        (Basic_Data['operation_status'].isin(['投运', '退运']))
+        (Basic_Data['operation_status'].isin(['投运', '停运']))
         ][['merchant_name', 'station_no']]
 
     # 本月充电量
@@ -1607,7 +1642,7 @@ def runindustryAndProvincialCompany():
     df1 = Basic_Data[
         (Basic_Data['归属单位'] == '产业单位') &
         (Basic_Data['commissioning_year_month'] <= M) &
-        (Basic_Data['operation_status'].isin(['投运', '退运']))
+        (Basic_Data['operation_status'].isin(['投运', '停运']))
         ][['station_no']]
     # 本月充电量
     df2 = Order_Data.groupby(by=['station_no', 'ym'], as_index=False).agg({'trans_energy': 'sum'})
@@ -1626,9 +1661,9 @@ def runindustryAndProvincialCompany():
 
     # 生成statisticsData
     # 同比
-    a1 = round(gb1.loc[gb1['month'] == last_year_month_str, 'trans_energy'].values[0], 2)
-    a2 = round(gb1.loc[gb1['month'] == M, 'trans_energy'].values[0], 2)
-    a3 = round((a2 - a1) / a1 * 100, 2)
+    a1 = get_month_value(gb1, last_year_month_str, 'trans_energy')
+    a2 = get_month_value(gb1, M, 'trans_energy')
+    a3 = round((a2 - a1) / a1 * 100, 2) if a1 else 0
     statisticsData = [{"title": "本月充电量", "value": a2, "unit": "kWh"},
                       {"title": "同比增长", "value": a3, "unit": "%"}]
     statisticsData = json.dumps(statisticsData, ensure_ascii=False)
@@ -1695,7 +1730,7 @@ def runindustryAndProvincialCompany():
     df1 = Basic_Data[
         (Basic_Data['归属单位'] == '主业单位') &
         (Basic_Data['commissioning_year_month'] <= M) &
-        (Basic_Data['operation_status'].isin(['投运', '退运']))
+        (Basic_Data['operation_status'].isin(['投运', '停运']))
         ][['station_no']]
     # 本月充电量
     df2 = Order_Data.groupby(by=['station_no', 'ym'], as_index=False).agg({'trans_energy': 'sum'})
@@ -1714,9 +1749,9 @@ def runindustryAndProvincialCompany():
 
     # 生成statisticsData
     # 同比
-    a1 = round(gb1.loc[gb1['month'] == last_year_month_str, 'trans_energy'].values[0], 2)
-    a2 = round(gb1.loc[gb1['month'] == M, 'trans_energy'].values[0], 2)
-    a3 = round((a2 - a1) / a1 * 100, 2)
+    a1 = get_month_value(gb1, last_year_month_str, 'trans_energy')
+    a2 = get_month_value(gb1, M, 'trans_energy')
+    a3 = round((a2 - a1) / a1 * 100, 2) if a1 else 0
     statisticsData = [{"title": "本月充电量", "value": a2, "unit": "kWh"},
                       {"title": "同比增长", "value": a3, "unit": "%"}]
     statisticsData = json.dumps(statisticsData, ensure_ascii=False)
@@ -1781,24 +1816,12 @@ def runindustryAndProvincialCompany():
     # In[64]:
 
 
-    # 站点基础信息
-    df1 = Basic_Data[
-        (Basic_Data['归属单位'] == '产业单位') &
-        (Basic_Data['commissioning_year_month'] <= M) &
-        (Basic_Data['operation_status'].isin(['投运', '退运']))
-        ][['city', 'station_no', 'station_capacity']]
-    # 剔除退运功率为0的站点
-    df1 = df1[df1['station_capacity'] > 0]
-
-    # 本月充电量
-    df2 = Order_Data[Order_Data['ym'] == M].groupby(by='station_no',
-                                                    as_index=False).agg({'trans_energy': 'sum'})
-    df3 = pd.merge(df1, df2, how='left', on='station_no').fillna(0)
-    df3 = df3[df3['trans_energy'] != 0]
-    df3['power_rate'] = round((df3['trans_energy'] / (df3['station_capacity'] * M_days * 24)) * 100, 2)
-
-    gb1 = df3.groupby(by='city', as_index=False).agg({'power_rate': 'mean'})
-    gb1.sort_values(by='power_rate', ascending=False, inplace=True)
+    df3 = PUE_Data[
+        (PUE_Data['归属单位'] == '产业单位') &
+        (PUE_Data['month'] == M)
+        ][['city', 'capacity_utilization_rate']]
+    gb1 = df3.groupby(by='city', as_index=False).agg({'capacity_utilization_rate': 'mean'})
+    gb1.sort_values(by='capacity_utilization_rate', ascending=False, inplace=True)
     gb1.reset_index(inplace=True, drop=True)
     gb1['rank'] = gb1.index + 1
     gb1.columns = ['city', 'pue', 'rank']
@@ -1898,24 +1921,12 @@ def runindustryAndProvincialCompany():
     # In[66]:
 
 
-    # 站点基础信息
-    df1 = Basic_Data[
-        (Basic_Data['归属单位'] == '主业单位') &
-        (Basic_Data['commissioning_year_month'] <= M) &
-        (Basic_Data['operation_status'].isin(['投运', '退运']))
-        ][['city', 'station_no', 'station_capacity']]
-    # 剔除退运功率为0的站点
-    df1 = df1[df1['station_capacity'] > 0]
-
-    # 本月充电量
-    df2 = Order_Data[Order_Data['ym'] == M].groupby(by='station_no',
-                                                    as_index=False).agg({'trans_energy': 'sum'})
-    df3 = pd.merge(df1, df2, how='left', on='station_no').fillna(0)
-    df3 = df3[df3['trans_energy'] != 0]
-    df3['power_rate'] = round((df3['trans_energy'] / (df3['station_capacity'] * M_days * 24)) * 100, 2)
-
-    gb1 = df3.groupby(by='city', as_index=False).agg({'power_rate': 'mean'})
-    gb1.sort_values(by='power_rate', ascending=False, inplace=True)
+    df3 = PUE_Data[
+        (PUE_Data['归属单位'] == '主业单位') &
+        (PUE_Data['month'] == M)
+        ][['city', 'capacity_utilization_rate']]
+    gb1 = df3.groupby(by='city', as_index=False).agg({'capacity_utilization_rate': 'mean'})
+    gb1.sort_values(by='capacity_utilization_rate', ascending=False, inplace=True)
     gb1.reset_index(inplace=True, drop=True)
     gb1['rank'] = gb1.index + 1
     gb1.columns = ['city', 'pue', 'rank']
@@ -2015,24 +2026,12 @@ def runindustryAndProvincialCompany():
     # In[68]:
 
 
-    # 站点基础信息
-    df1 = Basic_Data[
-        (Basic_Data['归属单位'] == '产业单位') &
-        (Basic_Data['commissioning_year_month'] <= M) &
-        (Basic_Data['operation_status'].isin(['投运', '退运']))
-        ][['merchant_name', 'station_no', 'station_capacity']]
-    # 剔除退运功率为0的站点
-    df1 = df1[df1['station_capacity'] > 0]
-
-    # 本月充电量
-    df2 = Order_Data[Order_Data['ym'] == M].groupby(by='station_no',
-                                                    as_index=False).agg({'trans_energy': 'sum'})
-    df3 = pd.merge(df1, df2, how='left', on='station_no').fillna(0)
-    df3 = df3[df3['trans_energy'] != 0]
-    df3['power_rate'] = round((df3['trans_energy'] / (df3['station_capacity'] * M_days * 24)) * 100, 2)
-
-    gb1 = df3.groupby(by='merchant_name', as_index=False).agg({'power_rate': 'mean'})
-    gb1.sort_values(by='power_rate', ascending=False, inplace=True)
+    df3 = PUE_Data[
+        (PUE_Data['归属单位'] == '产业单位') &
+        (PUE_Data['month'] == M)
+        ][['merchant_name', 'capacity_utilization_rate']]
+    gb1 = df3.groupby(by='merchant_name', as_index=False).agg({'capacity_utilization_rate': 'mean'})
+    gb1.sort_values(by='capacity_utilization_rate', ascending=False, inplace=True)
     gb1.reset_index(inplace=True, drop=True)
     gb1['rank'] = gb1.index + 1
     gb1.columns = ['operator', 'pue', 'rank']
@@ -2132,24 +2131,12 @@ def runindustryAndProvincialCompany():
     # In[70]:
 
 
-    # 站点基础信息
-    df1 = Basic_Data[
-        (Basic_Data['归属单位'] == '主业单位') &
-        (Basic_Data['commissioning_year_month'] <= M) &
-        (Basic_Data['operation_status'].isin(['投运', '退运']))
-        ][['merchant_name', 'station_no', 'station_capacity']]
-    # 剔除退运功率为0的站点
-    df1 = df1[df1['station_capacity'] > 0]
-
-    # 本月充电量
-    df2 = Order_Data[Order_Data['ym'] == M].groupby(by='station_no',
-                                                    as_index=False).agg({'trans_energy': 'sum'})
-    df3 = pd.merge(df1, df2, how='left', on='station_no').fillna(0)
-    df3 = df3[df3['trans_energy'] != 0]
-    df3['power_rate'] = round((df3['trans_energy'] / (df3['station_capacity'] * M_days * 24)) * 100, 2)
-
-    gb1 = df3.groupby(by='merchant_name', as_index=False).agg({'power_rate': 'mean'})
-    gb1.sort_values(by='power_rate', ascending=False, inplace=True)
+    df3 = PUE_Data[
+        (PUE_Data['归属单位'] == '主业单位') &
+        (PUE_Data['month'] == M)
+        ][['merchant_name', 'capacity_utilization_rate']]
+    gb1 = df3.groupby(by='merchant_name', as_index=False).agg({'capacity_utilization_rate': 'mean'})
+    gb1.sort_values(by='capacity_utilization_rate', ascending=False, inplace=True)
     gb1.reset_index(inplace=True, drop=True)
     gb1['rank'] = gb1.index + 1
     gb1.columns = ['operator', 'pue', 'rank']
@@ -2249,26 +2236,12 @@ def runindustryAndProvincialCompany():
     # In[72]:
 
 
-    df1 = Basic_Data[
-        (Basic_Data['归属单位'] == '产业单位') &
-        (Basic_Data['commissioning_year_month'] <= M) &
-        (Basic_Data['operation_status'].isin(['投运', '退运']))
-        ][['station_no', 'station_capacity']]
-
-    # 每月充电量
-    df2 = Order_Data.groupby(by=['station_no', 'ym'], as_index=False).agg({'trans_energy': 'sum'})
-    df2 = pd.merge(df1, df2, how='left', on='station_no').fillna(0)
-    gb1 = df2.groupby(by=['ym', 'station_no'], as_index=False).agg({'trans_energy': 'sum', 'station_capacity': 'max'})
-    gb1 = gb1[(gb1['trans_energy'] != 0) & (gb1['ym'] != 0) & (gb1['station_capacity'] != 0)].reset_index(drop=True)
-
-    # 循环获取每行月份对应的总天数
-    gb1['pue'] = 0
-    for i in range(gb1.shape[0]):
-        day = get_days_in_month(gb1.loc[i, 'ym'])
-        gb1.loc[i, 'pue'] = round((gb1.loc[i, 'trans_energy'] / (gb1.loc[i, 'station_capacity'] * day * 24)) * 100, 2)
-    gb1 = gb1.groupby(by='ym', as_index=False).agg({'pue': 'mean'})
-    gb1['pue'] = round(gb1['pue'], 2)
+    gb1 = PUE_Data[
+        (PUE_Data['归属单位'] == '产业单位') &
+        (PUE_Data['month'] <= M)
+        ].groupby(by='month', as_index=False).agg({'capacity_utilization_rate': 'mean'})
     gb1.columns = ['month', 'pue']
+    gb1['pue'] = round(gb1['pue'], 2)
 
     # 将近12个月份升序排序并获取对应数据
     df3 = Data.sort_values(by='month').reset_index(drop=True)
@@ -2280,9 +2253,9 @@ def runindustryAndProvincialCompany():
 
     # 生成statisticsData
     # 同比
-    a1 = round(gb1.loc[gb1['month'] == last_year_month_str, 'pue'].values[0], 2)
-    a2 = round(gb1.loc[gb1['month'] == M, 'pue'].values[0], 2)
-    a3 = round((a2 - a1) / a1 * 100, 2)
+    a1 = get_month_value(gb1, last_year_month_str, 'pue')
+    a2 = get_month_value(gb1, M, 'pue')
+    a3 = round((a2 - a1) / a1 * 100, 2) if a1 else 0
     statisticsData = [{"title": "本月功率利用率", "value": a2, "unit": "%"},
                       {"title": "同比增长", "value": a3, "unit": "%"}]
     statisticsData = json.dumps(statisticsData, ensure_ascii=False)
@@ -2345,26 +2318,12 @@ def runindustryAndProvincialCompany():
     # In[74]:
 
 
-    df1 = Basic_Data[
-        (Basic_Data['归属单位'] == '主业单位') &
-        (Basic_Data['commissioning_year_month'] <= M) &
-        (Basic_Data['operation_status'].isin(['投运', '退运']))
-        ][['station_no', 'station_capacity']]
-
-    # 每月充电量
-    df2 = Order_Data.groupby(by=['station_no', 'ym'], as_index=False).agg({'trans_energy': 'sum'})
-    df2 = pd.merge(df1, df2, how='left', on='station_no').fillna(0)
-    gb1 = df2.groupby(by=['ym', 'station_no'], as_index=False).agg({'trans_energy': 'sum', 'station_capacity': 'max'})
-    gb1 = gb1[(gb1['trans_energy'] != 0) & (gb1['ym'] != 0) & (gb1['station_capacity'] != 0)].reset_index(drop=True)
-
-    # 循环获取每行月份对应的总天数
-    gb1['pue'] = 0
-    for i in range(gb1.shape[0]):
-        day = get_days_in_month(gb1.loc[i, 'ym'])
-        gb1.loc[i, 'pue'] = round((gb1.loc[i, 'trans_energy'] / (gb1.loc[i, 'station_capacity'] * day * 24)) * 100, 2)
-    gb1 = gb1.groupby(by='ym', as_index=False).agg({'pue': 'mean'})
-    gb1['pue'] = round(gb1['pue'], 2)
+    gb1 = PUE_Data[
+        (PUE_Data['归属单位'] == '主业单位') &
+        (PUE_Data['month'] <= M)
+        ].groupby(by='month', as_index=False).agg({'capacity_utilization_rate': 'mean'})
     gb1.columns = ['month', 'pue']
+    gb1['pue'] = round(gb1['pue'], 2)
 
     # 将近12个月份升序排序并获取对应数据
     df3 = Data.sort_values(by='month').reset_index(drop=True)
@@ -2376,9 +2335,9 @@ def runindustryAndProvincialCompany():
 
     # 生成statisticsData
     # 同比
-    a1 = round(gb1.loc[gb1['month'] == last_year_month_str, 'pue'].values[0], 2)
-    a2 = round(gb1.loc[gb1['month'] == M, 'pue'].values[0], 2)
-    a3 = round((a2 - a1) / a1 * 100, 2)
+    a1 = get_month_value(gb1, last_year_month_str, 'pue')
+    a2 = get_month_value(gb1, M, 'pue')
+    a3 = round((a2 - a1) / a1 * 100, 2) if a1 else 0
     statisticsData = [{"title": "本月功率利用率", "value": a2, "unit": "%"},
                       {"title": "同比增长", "value": a3, "unit": "%"}]
     statisticsData = json.dumps(statisticsData, ensure_ascii=False)
@@ -2452,7 +2411,7 @@ def runindustryAndProvincialCompany():
     df1 = Basic_Data[
         (Basic_Data['归属单位'] == '产业单位') &
         (Basic_Data['commissioning_year_month'] <= M) &
-        (Basic_Data['operation_status'].isin(['投运', '退运']))
+        (Basic_Data['operation_status'].isin(['投运', '停运', '退运']))
         ][['city', 'station_no']]
 
     # 本月充电收入
@@ -2565,7 +2524,7 @@ def runindustryAndProvincialCompany():
     df1 = Basic_Data[
         (Basic_Data['归属单位'] == '主业单位') &
         (Basic_Data['commissioning_year_month'] <= M) &
-        (Basic_Data['operation_status'].isin(['投运', '退运']))
+        (Basic_Data['operation_status'].isin(['投运', '停运', '退运']))
         ][['city', 'station_no']]
 
     # 本月充电收入
@@ -2690,7 +2649,7 @@ def runindustryAndProvincialCompany():
     df1 = Basic_Data[
         (Basic_Data['归属单位'] == '产业单位') &
         (Basic_Data['commissioning_year_month'] <= M) &
-        (Basic_Data['operation_status'].isin(['投运', '退运']))
+        (Basic_Data['operation_status'].isin(['投运', '停运', '退运']))
         ][['merchant_name', 'station_no']]
 
     # 本月充电收入
@@ -2803,7 +2762,7 @@ def runindustryAndProvincialCompany():
     df1 = Basic_Data[
         (Basic_Data['归属单位'] == '主业单位') &
         (Basic_Data['commissioning_year_month'] <= M) &
-        (Basic_Data['operation_status'].isin(['投运', '退运']))
+        (Basic_Data['operation_status'].isin(['投运', '停运', '退运']))
         ][['merchant_name', 'station_no']]
 
     # 本月充电收入
@@ -2922,7 +2881,7 @@ def runindustryAndProvincialCompany():
     df1 = Basic_Data[
         (Basic_Data['归属单位'] == '产业单位') &
         (Basic_Data['commissioning_year_month'] <= M) &
-        (Basic_Data['operation_status'].isin(['投运', '退运']))
+        (Basic_Data['operation_status'].isin(['投运', '停运', '退运']))
         ][['station_no']]
     # 本月充电收入
     df2 = Order_Data.groupby(by=['station_no', 'ym'], as_index=False).agg({'trans_amount': 'sum'})
@@ -2941,9 +2900,9 @@ def runindustryAndProvincialCompany():
 
     # 生成statisticsData
     # 同比
-    a1 = round(gb1.loc[gb1['month'] == last_year_month_str, 'trans_amount'].values[0], 2)
-    a2 = round(gb1.loc[gb1['month'] == M, 'trans_amount'].values[0], 2)
-    a3 = round((a2 - a1) / a1 * 100, 2)
+    a1 = get_month_value(gb1, last_year_month_str, 'trans_amount')
+    a2 = get_month_value(gb1, M, 'trans_amount')
+    a3 = round((a2 - a1) / a1 * 100, 2) if a1 else 0
     statisticsData = [{"title": "本月充电收入", "value": a2, "unit": "元"},
                       {"title": "同比增长", "value": a3, "unit": "%"}]
     statisticsData = json.dumps(statisticsData, ensure_ascii=False)
@@ -3010,7 +2969,7 @@ def runindustryAndProvincialCompany():
     df1 = Basic_Data[
         (Basic_Data['归属单位'] == '主业单位') &
         (Basic_Data['commissioning_year_month'] <= M) &
-        (Basic_Data['operation_status'].isin(['投运', '退运']))
+        (Basic_Data['operation_status'].isin(['投运', '停运', '退运']))
         ][['station_no']]
     # 本月充电收入
     df2 = Order_Data.groupby(by=['station_no', 'ym'], as_index=False).agg({'trans_amount': 'sum'})
@@ -3029,9 +2988,9 @@ def runindustryAndProvincialCompany():
 
     # 生成statisticsData
     # 同比
-    a1 = round(gb1.loc[gb1['month'] == last_year_month_str, 'trans_amount'].values[0], 2)
-    a2 = round(gb1.loc[gb1['month'] == M, 'trans_amount'].values[0], 2)
-    a3 = round((a2 - a1) / a1 * 100, 2)
+    a1 = get_month_value(gb1, last_year_month_str, 'trans_amount')
+    a2 = get_month_value(gb1, M, 'trans_amount')
+    a3 = round((a2 - a1) / a1 * 100, 2) if a1 else 0
     statisticsData = [{"title": "本月充电收入", "value": a2, "unit": "元"},
                       {"title": "同比增长", "value": a3, "unit": "%"}]
     statisticsData = json.dumps(statisticsData, ensure_ascii=False)
@@ -3096,15 +3055,15 @@ def runindustryAndProvincialCompany():
     # In[89]:
 
 
-    # 1、获取当前月份及之前投运站点的信息
+    # 1、获取当前月份及之前投运、停运站点的信息
     df1 = Basic_Data[
         (Basic_Data['归属单位'] == '产业单位') &
         (Basic_Data['commissioning_year_month'] <= M) &
-        (Basic_Data['operation_status'].isin(['投运', '退运']))
+        (Basic_Data['operation_status'].isin(['投运', '停运']))
         ][['station_no', 'station_name', 'station_capacity', 'charge_count', 'merchant_name']]
 
     # 2、筛选订单表中当年且当前月份之前的数据
-    df2 = Order_Data[(Order_Data['year'] == '2025') & (Order_Data['ym'] <= M)]
+    df2 = Order_Data[(Order_Data['year'] == str(year)) & (Order_Data['ym'] <= M)]
 
     # 3、按站点编号统计当年各站点的充电量数据
     gb1 = df2.groupby(by='station_no', as_index=False).agg({'trans_energy': 'sum',
@@ -3113,14 +3072,38 @@ def runindustryAndProvincialCompany():
     df3 = pd.merge(df1[df1['station_capacity'] != 0], gb1[gb1['trans_energy'] != 0], how='left', on='station_no').fillna(0)
     df3 = df3[df3['trans_energy'] != 0]
 
-    # 5、特殊处理功率利用率，先算站点数据再求平均
-    df3['pue'] = round((df3['trans_energy'] / (df3['station_capacity'] * total_days * 24)) * 100, 2)
-
     df4 = df3.groupby(by='merchant_name', as_index=False).agg({'trans_energy': 'sum',
-                                                               'trans_amount': 'sum',
-                                                               'charge_count': 'sum',
-                                                               'pue': 'mean'})
+                                                               'charge_count': 'sum'})
     df4['charge_day_energy'] = df4['trans_energy'] / (df4['charge_count'] * total_days)
+
+    # 本年单位功率利用率直接使用新库字段
+    merchant_pue = PUE_Data[
+        (PUE_Data['归属单位'] == '产业单位') &
+        (PUE_Data['month'].str[:4] == str(year)) &
+        (PUE_Data['month'] <= M)
+        ].groupby(by='merchant_name', as_index=False).agg({'capacity_utilization_rate': 'mean'})
+    merchant_pue.columns = ['merchant_name', 'pue']
+    df4 = pd.merge(df4, merchant_pue, how='left', on='merchant_name')
+    df4['pue'] = df4['pue'].fillna(0)
+
+    # 累计充电收入单独统计投运、停运和退运站点，不改变联动单位范围
+    income_stations = Basic_Data[
+        (Basic_Data['归属单位'] == '产业单位') &
+        (Basic_Data['commissioning_year_month'] <= M) &
+        (Basic_Data['operation_status'].isin(['投运', '停运', '退运']))
+        ][['station_no', 'station_capacity', 'merchant_name']]
+    income_station_data = pd.merge(
+        income_stations[income_stations['station_capacity'] != 0],
+        gb1[gb1['trans_energy'] != 0],
+        how='left',
+        on='station_no'
+    ).fillna(0)
+    income_station_data = income_station_data[income_station_data['trans_energy'] != 0]
+    merchant_income = income_station_data.groupby(by='merchant_name', as_index=False).agg(
+        {'trans_amount': 'sum'}
+    )
+    df4 = pd.merge(df4, merchant_income, how='left', on='merchant_name')
+    df4['trans_amount'] = df4['trans_amount'].fillna(0)
     df4 = df4[['merchant_name', 'trans_energy', 'trans_amount', 'charge_day_energy', 'pue']]
     df4.columns = ['单位名称', '本年单位累计充电量', '本年单位累计充电收入', '本年单位单枪日均充电量', '本年单位功率利用率']
     df4 = df4.fillna(0)
@@ -3176,15 +3159,15 @@ def runindustryAndProvincialCompany():
     # In[92]:
 
 
-    # 1、获取当前月份及之前投运站点的信息
+    # 1、获取当前月份及之前投运、停运站点的信息
     df1 = Basic_Data[
         (Basic_Data['归属单位'] == '主业单位') &
         (Basic_Data['commissioning_year_month'] <= M) &
-        (Basic_Data['operation_status'].isin(['投运', '退运']))
+        (Basic_Data['operation_status'].isin(['投运', '停运']))
         ][['station_no', 'station_name', 'station_capacity', 'charge_count', 'merchant_name']]
 
     # 2、筛选订单表中当年且当前月份之前的数据
-    df2 = Order_Data[(Order_Data['year'] == '2025') & (Order_Data['ym'] <= M)]
+    df2 = Order_Data[(Order_Data['year'] == str(year)) & (Order_Data['ym'] <= M)]
 
     # 3、按站点编号统计当年各站点的充电量数据
     gb1 = df2.groupby(by='station_no', as_index=False).agg({'trans_energy': 'sum',
@@ -3193,14 +3176,38 @@ def runindustryAndProvincialCompany():
     df3 = pd.merge(df1[df1['station_capacity'] != 0], gb1[gb1['trans_energy'] != 0], how='left', on='station_no').fillna(0)
     df3 = df3[df3['trans_energy'] != 0]
 
-    # 5、特殊处理功率利用率，先算站点数据再求平均
-    df3['pue'] = round((df3['trans_energy'] / (df3['station_capacity'] * total_days * 24)) * 100, 2)
-
     df4 = df3.groupby(by='merchant_name', as_index=False).agg({'trans_energy': 'sum',
-                                                               'trans_amount': 'sum',
-                                                               'charge_count': 'sum',
-                                                               'pue': 'mean'})
+                                                               'charge_count': 'sum'})
     df4['charge_day_energy'] = df4['trans_energy'] / (df4['charge_count'] * total_days)
+
+    # 本年单位功率利用率直接使用新库字段
+    merchant_pue = PUE_Data[
+        (PUE_Data['归属单位'] == '主业单位') &
+        (PUE_Data['month'].str[:4] == str(year)) &
+        (PUE_Data['month'] <= M)
+        ].groupby(by='merchant_name', as_index=False).agg({'capacity_utilization_rate': 'mean'})
+    merchant_pue.columns = ['merchant_name', 'pue']
+    df4 = pd.merge(df4, merchant_pue, how='left', on='merchant_name')
+    df4['pue'] = df4['pue'].fillna(0)
+
+    # 累计充电收入单独统计投运、停运和退运站点，不改变联动单位范围
+    income_stations = Basic_Data[
+        (Basic_Data['归属单位'] == '主业单位') &
+        (Basic_Data['commissioning_year_month'] <= M) &
+        (Basic_Data['operation_status'].isin(['投运', '停运', '退运']))
+        ][['station_no', 'station_capacity', 'merchant_name']]
+    income_station_data = pd.merge(
+        income_stations[income_stations['station_capacity'] != 0],
+        gb1[gb1['trans_energy'] != 0],
+        how='left',
+        on='station_no'
+    ).fillna(0)
+    income_station_data = income_station_data[income_station_data['trans_energy'] != 0]
+    merchant_income = income_station_data.groupby(by='merchant_name', as_index=False).agg(
+        {'trans_amount': 'sum'}
+    )
+    df4 = pd.merge(df4, merchant_income, how='left', on='merchant_name')
+    df4['trans_amount'] = df4['trans_amount'].fillna(0)
     df4 = df4[['merchant_name', 'trans_energy', 'trans_amount', 'charge_day_energy', 'pue']]
     df4.columns = ['单位名称', '本年单位累计充电量', '本年单位累计充电收入', '本年单位单枪日均充电量', '本年单位功率利用率']
     df4 = df4.fillna(0)
@@ -3256,7 +3263,7 @@ def runindustryAndProvincialCompany():
     # In[95]:
 
 
-    df1 = Basic_Data[(Basic_Data['operation_status'] == '投运') &
+    df1 = Basic_Data[(Basic_Data['operation_status'].isin(['投运', '停运'])) &
                      (Basic_Data['station_capacity'] > 0) &
                      (Basic_Data['charge_count'] > 0) &
                      (Basic_Data['merchant_name'] != '其他') &
@@ -3294,11 +3301,6 @@ def runindustryAndProvincialCompany():
                                                                     '归属单位': 'max'})
 
     gb1 = pd.merge(gb1, Basic_Data[['station_no', 'station_capacity', 'charge_count']], how='left', on='station_no')
-    # 循环获取每行月份对应的总天数
-    gb1['pue'] = 0
-    for i in range(gb1.shape[0]):
-        day = get_days_in_month(gb1.loc[i, 'ym'])
-        gb1.loc[i, 'pue'] = round((gb1.loc[i, 'trans_energy'] / (gb1.loc[i, 'station_capacity'] * day * 24)) * 100, 2)
 
     # In[100]:
 
@@ -3307,11 +3309,10 @@ def runindustryAndProvincialCompany():
                                                                                'trans_amount': 'sum',
                                                                                'charge_count': 'sum',
                                                                                'station_capacity': 'sum',
-                                                                               'pue': 'mean',
                                                                                'station_no': 'count'})
     gb2.columns = ['merchant_name', '归属单位', 'ym',
                    'trans_energy', 'trans_amount', 'charge_count',
-                   'station_capacity', 'pue', 'station_count']
+                   'station_capacity', 'station_count']
     # 计算单枪日均充电量
     # 循环获取每行月份对应的总天数
     gb2['charge_day_energy'] = 0
@@ -3319,6 +3320,25 @@ def runindustryAndProvincialCompany():
         day = get_days_in_month(gb2.loc[i, 'ym'])
         gb2.loc[i, 'charge_day_energy'] = round((gb2.loc[i, 'trans_energy'] / (gb2.loc[i, 'charge_count'] * day)), 2)
     gb2
+
+    # 金额指标使用独立的投运、停运和退运站点月度汇总
+    income_stations = Basic_Data[
+        (Basic_Data['operation_status'].isin(['投运', '停运', '退运'])) &
+        (Basic_Data['station_capacity'] > 0) &
+        (Basic_Data['charge_count'] > 0) &
+        (Basic_Data['merchant_name'] != '其他') &
+        (Basic_Data['commissioning_year_month'] <= M)
+        ][['station_no', 'merchant_name', 'charge_count', '归属单位']].copy()
+    income_orders = pd.merge(income_stations, Order_Data, how='left', on='station_no')
+    income_station_month = income_orders.groupby(by=['station_no', 'ym'], as_index=False).agg({
+        'trans_amount': 'sum',
+        'merchant_name': 'max',
+        '归属单位': 'max',
+        'charge_count': 'max'
+    })
+    income_gb2 = income_station_month.groupby(
+        by=['merchant_name', '归属单位', 'ym'], as_index=False
+    ).agg({'trans_amount': 'sum', 'charge_count': 'sum'})
 
     # ## 站点月均充电量
 
@@ -3386,7 +3406,7 @@ def runindustryAndProvincialCompany():
         statistics = [
             {"title": "本月度此商户月充电量为", "value": f"{current_trans:.2f}" if current_trans else "N/A", "unit": "kWh"},
             {"title": "本月度平台商户平均水平为", "value": f"{current_avg:.2f}" if current_avg else "N/A", "unit": "kWh"},
-            {"title": "本月度此商户（含产业、省公司、社会商户与四川电动）排名", "value": current_rank, "unit": " "}
+            {"title": "本月度此商户（含产业单位与省公司）排名", "value": current_rank, "unit": " "}
         ]
 
         # 构建图表数据字典
@@ -3445,7 +3465,7 @@ def runindustryAndProvincialCompany():
         statistics = [
             {"title": "本月度此商户月充电量为", "value": f"{current_trans:.2f}" if current_trans else "N/A", "unit": "kWh"},
             {"title": "本月度平台商户平均水平为", "value": f"{current_avg:.2f}" if current_avg else "N/A", "unit": "kWh"},
-            {"title": "本月度此商户（含产业、省公司、社会商户与四川电动）排名", "value": current_rank, "unit": " "}
+            {"title": "本月度此商户（含产业单位与省公司）排名", "value": current_rank, "unit": " "}
         ]
 
         # 构建图表数据字典
@@ -3479,10 +3499,10 @@ def runindustryAndProvincialCompany():
     # In[107]:
 
 
-    df1 = gb2[['merchant_name', '归属单位', 'ym', 'trans_amount']].copy()
+    df1 = income_gb2[['merchant_name', '归属单位', 'ym', 'trans_amount']].copy()
     df1['trans_amount'] = round(df1['trans_amount'], 2)
     # 计算平均值
-    df2 = gb2.groupby(by='ym', as_index=False).agg({'trans_amount': 'sum', 'merchant_name': 'count'})
+    df2 = income_gb2.groupby(by='ym', as_index=False).agg({'trans_amount': 'sum', 'merchant_name': 'count'})
     df2['avg_trans_amount'] = round(df2['trans_amount'] / df2['merchant_name'], 2)
     df2 = df2[['ym', 'avg_trans_amount']]
     # 数据合并
@@ -3540,12 +3560,12 @@ def runindustryAndProvincialCompany():
         statistics = [
             {"title": "本月度此商户月充电收入为", "value": f"{current_trans:.2f}" if current_trans else "N/A", "unit": "元"},
             {"title": "本月度平台商户平均水平为", "value": f"{current_avg:.2f}" if current_avg else "N/A", "unit": "元"},
-            {"title": "本月度此商户（含产业、省公司、社会商户与四川电动）排名", "value": current_rank, "unit": " "}
+            {"title": "本月度此商户（含产业单位与省公司）排名", "value": current_rank, "unit": " "}
         ]
 
         # 构建图表数据字典
         chart_data = {
-            "legendName": ["月充电收入", "平台商户平均水平", "同比增长率"],
+            "legendName": ["月充电收入", "平台商户平均水平", "环比增长率"],
             "axisData": axis_data,
             "chartData": [trans_amount, avg_energy, growth_rates],
             "yAxisLeftName": "元",
@@ -3599,12 +3619,12 @@ def runindustryAndProvincialCompany():
         statistics = [
             {"title": "本月度此商户月充电收入为", "value": f"{current_trans:.2f}" if current_trans else "N/A", "unit": "元"},
             {"title": "本月度平台商户平均水平为", "value": f"{current_avg:.2f}" if current_avg else "N/A", "unit": "元"},
-            {"title": "本月度此商户（含产业、省公司、社会商户与四川电动）排名", "value": current_rank, "unit": " "}
+            {"title": "本月度此商户（含产业单位与省公司）排名", "value": current_rank, "unit": " "}
         ]
 
         # 构建图表数据字典
         chart_data = {
-            "legendName": ["月充电收入", "平台商户平均水平", "同比增长率"],
+            "legendName": ["月充电收入", "平台商户平均水平", "环比增长率"],
             "axisData": axis_data,
             "chartData": [trans_amount, avg_energy, growth_rates],
             "yAxisLeftName": "元",
@@ -3633,7 +3653,7 @@ def runindustryAndProvincialCompany():
     # In[113]:
 
 
-    gb2.head(1)
+    PUE_Data.head(1)
 
     # In[114]:
 
@@ -3699,7 +3719,7 @@ def runindustryAndProvincialCompany():
         statistics = [
             {"title": "本月度此商户单枪日均充电量为", "value": f"{current_trans:.2f}" if current_trans else "N/A", "unit": "kWh"},
             {"title": "本月度平台商户平均水平为", "value": f"{current_avg:.2f}" if current_avg else "N/A", "unit": "kWh"},
-            {"title": "本月度此商户（含产业、省公司、社会商户与四川电动）排名", "value": current_rank, "unit": " "}
+            {"title": "本月度此商户（含产业单位与省公司）排名", "value": current_rank, "unit": " "}
         ]
 
         # 构建图表数据字典
@@ -3758,7 +3778,7 @@ def runindustryAndProvincialCompany():
         statistics = [
             {"title": "本月度此商户单枪日均充电量为", "value": f"{current_trans:.2f}" if current_trans else "N/A", "unit": "kWh"},
             {"title": "本月度平台商户平均水平为", "value": f"{current_avg:.2f}" if current_avg else "N/A", "unit": "kWh"},
-            {"title": "本月度此商户（含产业、省公司、社会商户与四川电动）排名", "value": current_rank, "unit": " "}
+            {"title": "本月度此商户（含产业单位与省公司）排名", "value": current_rank, "unit": " "}
         ]
 
         # 构建图表数据字典
@@ -3797,10 +3817,13 @@ def runindustryAndProvincialCompany():
     # In[121]:
 
 
-    df1 = gb2[['merchant_name', '归属单位', 'ym', 'pue']].copy()
+    df1 = PUE_Data[PUE_Data['month'] <= M].groupby(
+        by=['merchant_name', '归属单位', 'month'], as_index=False
+    ).agg({'capacity_utilization_rate': 'mean'})
+    df1.columns = ['merchant_name', '归属单位', 'ym', 'pue']
     df1['pue'] = round(df1['pue'], 2)
     # 计算平均值
-    df2 = gb2.groupby(by='ym', as_index=False).agg({'pue': 'mean'})
+    df2 = df1.groupby(by='ym', as_index=False).agg({'pue': 'mean'})
     df2['pue'] = round(df2['pue'], 2)
     df2.columns = ['ym', 'avg_pue']
     # 数据合并
@@ -3858,7 +3881,7 @@ def runindustryAndProvincialCompany():
         statistics = [
             {"title": "本月度此商户功率利用率为", "value": f"{current_trans:.2f}" if current_trans else "N/A", "unit": "%"},
             {"title": "本月度平台商户平均水平为", "value": f"{current_avg:.2f}" if current_avg else "N/A", "unit": "%"},
-            {"title": "本月度此商户（含产业、省公司、社会商户与四川电动）排名", "value": current_rank, "unit": " "}
+            {"title": "本月度此商户（含产业单位与省公司）排名", "value": current_rank, "unit": " "}
         ]
 
         # 构建图表数据字典
@@ -3917,7 +3940,7 @@ def runindustryAndProvincialCompany():
         statistics = [
             {"title": "本月度此商户功率利用率为", "value": f"{current_trans:.2f}" if current_trans else "N/A", "unit": "%"},
             {"title": "本月度平台商户平均水平为", "value": f"{current_avg:.2f}" if current_avg else "N/A", "unit": "%"},
-            {"title": "本月度此商户（含产业、省公司、社会商户与四川电动）排名", "value": current_rank, "unit": " "}
+            {"title": "本月度此商户（含产业单位与省公司）排名", "value": current_rank, "unit": " "}
         ]
 
         # 构建图表数据字典
@@ -3956,7 +3979,7 @@ def runindustryAndProvincialCompany():
     # In[128]:
 
 
-    df1 = Basic_Data[(Basic_Data['operation_status'] == '投运') &
+    df1 = Basic_Data[(Basic_Data['operation_status'].isin(['投运', '停运'])) &
                      (Basic_Data['station_capacity'] > 0) &
                      (Basic_Data['charge_count'] > 0) &
                      (Basic_Data['merchant_name'] != '其他') &
@@ -4059,11 +4082,9 @@ def runindustryAndProvincialCompany():
 
 
     df1 = gb2[['merchant_name', '归属单位',
-               'ym', 'trans_amount', 'station_count',
+               'ym', 'station_count',
                'station_capacity', 'charge_day_energy', 'charge_count']].copy()
     df2 = df1[df1['ym'] == M].reset_index(drop=True)
-    df2['charge_amount'] = df2['trans_amount'] / df2['charge_count']
-    df2['charge_amount'] = round(df2['charge_amount'], 2)
     df2
 
     # In[136]:
@@ -4072,7 +4093,6 @@ def runindustryAndProvincialCompany():
     # 1. 按merchant_name分组聚合，计算所需指标
     grouped = df2.groupby(['merchant_name', '归属单位']).agg({
         'charge_day_energy': 'sum',  # 用于chargeRank排名
-        'charge_amount': 'sum',  # 用于incomeRank排名
         'station_count': 'sum',  # siteCount
         'station_capacity': 'sum',  # totalPower
         'charge_count': 'sum'  # chargerCount
@@ -4082,12 +4102,27 @@ def runindustryAndProvincialCompany():
         'station_capacity': 'totalPower',
         'charge_count': 'chargerCount'
     }).reset_index()
-    # 单独计算单位数量，因为德阳明源电力集团有限公司智网服务分公司特殊情况，既有产业单位，又有社会站
+    # 单独计算单位数量，兼容同一商户对应多个归属单位的情况
     grouped['total_count'] = df2.drop_duplicates(subset=['merchant_name', '归属单位']).shape[0]
+
+    # 收入排名的金额、枪数分母和参与单位均按三种状态计算
+    income_rank_data = income_gb2[income_gb2['ym'] == M].copy()
+    income_rank_data['charge_amount'] = round(
+        income_rank_data['trans_amount'] / income_rank_data['charge_count'], 2
+    )
+    income_rank_data['incomeRank'] = income_rank_data['charge_amount'].rank(
+        ascending=False, method='min'
+    ).astype(int)
+    grouped = pd.merge(
+        grouped,
+        income_rank_data[['merchant_name', '归属单位', 'incomeRank']],
+        how='left',
+        on=['merchant_name', '归属单位']
+    )
+    grouped['incomeRank'] = grouped['incomeRank'].fillna(0).astype(int)
 
     # 2. 计算排名（降序，最大的值排名为1）
     grouped['chargeRank'] = grouped['charge_day_energy'].rank(ascending=False, method='min').astype(int)
-    grouped['incomeRank'] = grouped['charge_amount'].rank(ascending=False, method='min').astype(int)
 
 
     # 3. 定义转换函数，生成目标格式并转为JSON
@@ -4235,8 +4270,3 @@ def runindustryAndProvincialCompany():
 
 
     # In[ ]:
-
-
-
-
-

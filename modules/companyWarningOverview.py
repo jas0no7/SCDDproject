@@ -19,8 +19,8 @@ def runcompanyWarningOverview():
     charging_station cs
     LEFT JOIN rec_merchant rm ON cs.property_owner_merhant_id = rm.merchant_id
     where 
-    rm.merchant_name = '国网电动汽车服务（四川）有限公司'
-    and operation_status in ('投运','退运');
+    cs.merchant_nature = '电动公司'
+    and operation_status in ('投运','退运','停运');
     """
     df1 = SQL(sql1)
     df1.loc[df1['station_category'] == '高速', 'station_category'] = '高速公共'
@@ -34,6 +34,18 @@ def runcompanyWarningOverview():
     print('筛选投运时间前：', df1.shape)
     df1 = df1[df1['commissioning_year_month'] <= M]
     print('筛选投运时间后：', df1.shape)
+
+    # 金额及金额派生指标使用投运、退运、停运站点；非金额指标仅使用投运、停运站点。
+    amount_station_statuses = ['投运', '退运', '停运']
+    non_amount_station_statuses = ['投运', '停运']
+    amount_station_nos = set(
+        df1.loc[df1['operation_status'].isin(amount_station_statuses), 'station_no']
+    )
+    non_amount_station_nos = set(
+        df1.loc[df1['operation_status'].isin(non_amount_station_statuses), 'station_no']
+    )
+    print('金额指标站点数量（投运、退运、停运）：', len(amount_station_nos))
+    print('非金额指标站点数量（投运、停运）：', len(non_amount_station_nos))
 
     # ### 数据类型转换
 
@@ -94,7 +106,7 @@ def runcompanyWarningOverview():
     # In[15]:
 
     # ==================注释==================
-    # 统计四川电动投资金额不为空的每个投运站点的总收入、总支出
+    # 统计四川电动投资金额不为空的每个投运、退运、停运站点的总收入、总支出
     # station_no：站点编号
     # revenue：总收入
     # cost：总支出
@@ -124,8 +136,8 @@ def runcompanyWarningOverview():
     charging_station cs
     LEFT JOIN rec_merchant rm ON cs.property_owner_merhant_id = rm.merchant_id
     where 
-    rm.merchant_name = '国网电动汽车服务（四川）有限公司'
-    and operation_status in ('投运','退运') and  investment_amount is not null) a
+    cs.merchant_nature = '电动公司'
+    and operation_status in ('投运','退运','停运') and  investment_amount is not null) a
     left join 
     (select * from station_cba_org_data
     where cba_month<='{M}') b
@@ -182,7 +194,8 @@ def runcompanyWarningOverview():
     rec_merchant_rec_station rmr ON cs.station_no = rmr.station_on
     LEFT JOIN
     scdd_rec_rules sr ON rmr.merchant_id = sr.merchant_id
-    where property_owner_merhant_id =119
+    where cs.merchant_nature = '电动公司'
+    and cs.operation_status in ('投运','退运','停运')
     and  JSON_UNQUOTE(JSON_EXTRACT(sr.profit_detail, '$.parkingFee')) IS NOT NULL;
     """
     df4 = SQL(sql4)
@@ -216,8 +229,8 @@ def runcompanyWarningOverview():
     charging_station cs
     LEFT JOIN rec_merchant rm ON cs.property_owner_merhant_id = rm.merchant_id
     where 
-    rm.merchant_name = '国网电动汽车服务（四川）有限公司'
-    and cs.operation_status in ('投运','退运')
+    cs.merchant_nature = '电动公司'
+    and cs.operation_status in ('投运','退运','停运')
     ) a
     left join 
     (select * from fin_rec_result_detail where rec_month <={M} and merchant_id != 119 ) b
@@ -298,14 +311,11 @@ def runcompanyWarningOverview():
 
     # In[32]:
 
-    # 筛选当前四川电动旗下投运状态的全量站点数据+技改站
-    data1 = df1[((df1['operation_status'] == '投运') |
-                 (df1['station_no'].isin(["300003000100002472",
-                                          "300003000100002473",
-                                          "300003013200011",
-                                          "300003013200099",
-                                          "300003013200108"]))) &
-                (df1['investment_amount'] != 0)]
+    # 筛选当前四川电动旗下投运、退运、停运状态且有初始投资的全量站点数据
+    data1 = df1[
+        df1['station_no'].isin(amount_station_nos) &
+        (df1['investment_amount'] != 0)
+    ]
     print(data1.shape)
     data1.head(1)
 
@@ -320,8 +330,8 @@ def runcompanyWarningOverview():
     # 合并站点补贴数据
     print('含有补贴的站点数量：', df2_cal.shape)
     data2 = pd.merge(data1, df2_cal, how='left', on='station_no').fillna(0)
-    print('合并后的投运的站点数量：', data2.shape)
-    print('四川电动投运站点中含有补贴的站点的数量：', data2[data2['total_subsidy'] != 0].shape)
+    print('合并后的投运、退运、停运站点数量：', data2.shape)
+    print('四川电动投运、退运、停运站点中含有补贴的站点数量：', data2[data2['total_subsidy'] != 0].shape)
     data2.head(1)
 
     # ## 运营数据合并
@@ -330,8 +340,8 @@ def runcompanyWarningOverview():
 
     # 合并各站点的运营总投入和总支出
     data3 = pd.merge(data2, df3_cal, how='left', on='station_no').fillna(0)
-    print('合并后的投运的站点数量：', data3.shape)
-    print('四川电动投运站点中含有运营数据的站点的数量：', data3[data3['revenue'] != 0].shape)
+    print('合并后的投运、退运、停运站点数量：', data3.shape)
+    print('四川电动投运、退运、停运站点中含有运营数据的站点数量：', data3[data3['revenue'] != 0].shape)
     data3.head(1)
 
     # ## 站点租金合并
@@ -340,8 +350,8 @@ def runcompanyWarningOverview():
 
     # 合并站点租金
     data4 = pd.merge(data3, df4, how='left', on='station_no').fillna(0)
-    print('合并后的投运的站点数量：', data4.shape)
-    print('四川电动投运站点中含有租金数据的站点的数量：', data4[data4['parking_fee'] != 0].shape)
+    print('合并后的投运、退运、停运站点数量：', data4.shape)
+    print('四川电动投运、退运、停运站点中含有租金数据的站点数量：', data4[data4['parking_fee'] != 0].shape)
     data4.head(1)
 
     # ## 分成数据合并
@@ -350,8 +360,8 @@ def runcompanyWarningOverview():
 
     # 合并站点分成
     data5 = pd.merge(data4, df5_cal, how='left', on='station_no').fillna(0)
-    print('合并后的投运的站点数量：', data5.shape)
-    print('四川电动投运站点中含有分成数据的站点的数量：', data5[data5['merchant_profit_amount'] != 0].shape)
+    print('合并后的投运、退运、停运站点数量：', data5.shape)
+    print('四川电动投运、退运、停运站点中含有分成数据的站点数量：', data5[data5['merchant_profit_amount'] != 0].shape)
     data5.head(1)
 
     # ## 运维数据合并
@@ -360,8 +370,8 @@ def runcompanyWarningOverview():
 
     # 合并站点运维费
     data6 = pd.merge(data5, df6_cal, how='left', on='station_no').fillna(0)
-    print('合并后的投运的站点数量：', data6.shape)
-    print('四川电动投运站点中含有运维数据的站点的数量：', data6[data6['maintenance_cost'] != 0].shape)
+    print('合并后的投运、退运、停运站点数量：', data6.shape)
+    print('四川电动投运、退运、停运站点中含有运维数据的站点数量：', data6[data6['maintenance_cost'] != 0].shape)
     data6.head(1)
 
     # ## 当年补贴数据合并
@@ -375,8 +385,8 @@ def runcompanyWarningOverview():
     # In[40]:
 
     data7 = pd.merge(data6, df2_year, how='left', on='station_no').fillna(0)
-    print('合并后的投运的站点数量：', data7.shape)
-    print('四川电动投运站点中含有当年补贴数据的站点的数量：', data7[data7['当年_total_subsidy'] != 0].shape)
+    print('合并后的投运、退运、停运站点数量：', data7.shape)
+    print('四川电动投运、退运、停运站点中含有当年补贴数据的站点数量：', data7[data7['当年_total_subsidy'] != 0].shape)
     data7.head(1)
 
     # ## 当年运营收入数据合并
@@ -399,8 +409,8 @@ def runcompanyWarningOverview():
 
     # 合并当年运营收入
     data8 = pd.merge(data7, df3_year, how='left', on='station_no').fillna(0)
-    print('合并后的投运的站点数量：', data8.shape)
-    print('四川电动投运站点中含有当年运营收入数据的站点的数量：', data8[data8['当年_revenue'] != 0].shape)
+    print('合并后的投运、退运、停运站点数量：', data8.shape)
+    print('四川电动投运、退运、停运站点中含有当年运营收入数据的站点数量：', data8[data8['当年_revenue'] != 0].shape)
     data8.head(1)
 
     # # 技改站数据合并-特殊处理
@@ -604,11 +614,38 @@ def runcompanyWarningOverview():
 
     # In[54]:
 
+    # 设备折旧进度是非金额指标，独立从投运、停运站点集计算并回填。
+    # 回本滞后率仍使用金额链内部的折旧进度计算，不受展示适用性影响。
+    non_amount_depreciation = df1.loc[
+        df1['station_no'].isin(non_amount_station_nos),
+        ['station_no', '设备折旧进度']
+    ].copy()
+    non_amount_depreciation = non_amount_depreciation.groupby(
+        'station_no', as_index=False
+    ).agg({'设备折旧进度': 'max'})
+    non_amount_depreciation['设备折旧进度（%）'] = (
+        (round(non_amount_depreciation['设备折旧进度'], 4) * 100 * 100)
+        .round()
+        .astype(int) / 100
+    )
+    non_amount_depreciation = non_amount_depreciation[
+        ['station_no', '设备折旧进度（%）']
+    ]
+    non_amount_depreciation.columns = ['站点编号', '设备折旧进度（%）']
+
     r = data10[['站点编号', '站点名称', '所属区域',
                 '站点类型', '总投资（万元）', '总成本（万元）',
                 '总收入（万元）', '静态投资回本进度（%）',
-                '今年静态投资回本进度（%）', '设备折旧进度（%）',
-                '回本滞后率（%）', '回本类型标签']]
+                '今年静态投资回本进度（%）',
+                '回本滞后率（%）', '回本类型标签']].copy()
+    r = pd.merge(r, non_amount_depreciation, how='left', on='站点编号')
+    r = r[['站点编号', '站点名称', '所属区域',
+           '站点类型', '总投资（万元）', '总成本（万元）',
+           '总收入（万元）', '静态投资回本进度（%）',
+           '今年静态投资回本进度（%）', '设备折旧进度（%）',
+           '回本滞后率（%）', '回本类型标签']]
+    r['设备折旧进度（%）'] = r['设备折旧进度（%）'].astype(object)
+    r.loc[r['设备折旧进度（%）'].isna(), '设备折旧进度（%）'] = None
 
     # ### r1-已回本站点
 
@@ -863,8 +900,10 @@ def runcompanyWarningOverview():
 
     # In[66]:
 
-    # 存在初始投资数据为0的情况，目前data10的数据基数实际只有212个，因此，需特殊处理得到全集352
-    data11 = df1[df1['operation_status'] == '投运'][['station_no', 'station_name', 'city', 'station_category']]
+    # 将初始投资为0的站点补入回本汇总全集，状态口径与金额链路保持一致
+    data11 = df1[df1['station_no'].isin(amount_station_nos)][
+        ['station_no', 'station_name', 'city', 'station_category']
+    ]
     data11.columns = ['站点编号', '站点名称', '所属区域', '站点类型']
     data11 = pd.merge(data11, data10, how='left', on=['站点编号', '站点名称', '所属区域', '站点类型']).fillna(0)
     print(data11.shape)
@@ -875,10 +914,11 @@ def runcompanyWarningOverview():
     # In[67]:
 
     # 已回本情况
-    a1 = data11.shape[0]  # 站点总数
+    amount_station_count = data11.shape[0]
+    non_amount_station_count = len(non_amount_station_nos)
     a2 = data11[data11['回本状态标签'] == '已回本'].shape[0]
-    rate = round((a2 / a1) * 100, 2)
-    adict1 = {'name': '自营充电站共', 'value': a1, 'unit': '座'}
+    rate = round((a2 / amount_station_count) * 100, 2)
+    adict1 = {'name': '自营充电站共', 'value': non_amount_station_count, 'unit': '座'}
     adict2 = {'name': '已回本站点', 'value': a2, 'unit': '座'}
     adict3 = {'name': '回本率', 'value': rate, 'unit': '%'}
     adict4 = {'title': '已回本情况', 'content': [adict1, adict2, adict3]}
@@ -1660,8 +1700,5 @@ def runcompanyWarningOverview():
     # In[ ]:
 
     # In[ ]:
-
-
-
 
 

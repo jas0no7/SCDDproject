@@ -1985,14 +1985,24 @@ def runkeyStationInternalCompetition():
 
     # In[330]:
 
+    # 统一转换计算字段，非法字符、空值和无穷值均按无效数据处理。
+    basic3['investment_amount'] = pd.to_numeric(
+        basic3['investment_amount'].astype(str).str.replace(',', '', regex=False),
+        errors='coerce'
+    ).replace([np.inf, -np.inf], np.nan)
+    basic3['station_capacity'] = pd.to_numeric(
+        basic3['station_capacity'], errors='coerce'
+    ).replace([np.inf, -np.inf], np.nan)
+
     # 添加新列pricePkW（单瓦造价）
     basic3['pricePkW'] = 0.0  # 初始化为0.0
 
-    # 创建有效计算掩码（只处理站点容量大于0的记录）
+    # 创建有效计算掩码（投资金额和站点容量均必须大于0）
     valid_mask = (
             basic3['investment_amount'].notna() &
             basic3['station_capacity'].notna() &
-            (basic3['station_capacity'] > 0)  # 只处理容量大于0的站点
+            (basic3['investment_amount'] > 0) &
+            (basic3['station_capacity'] > 0)
     )
 
     # 对有效记录计算单瓦造价
@@ -2009,19 +2019,58 @@ def runkeyStationInternalCompetition():
 
     # In[331]:
 
-    # 1. 筛选income1中cba_month等于M的行
-    filtered_income = income1[income1['cba_month'] == M][['station_no', 'income']]
+    # 1. 统一站点编号和月份格式，避免数据库中的数字/字符串类型差异导致收入匹配失败。
+    def _station_key(value):
+        if pd.isna(value):
+            return ''
+        text = str(value).strip()
+        if text.endswith('.0'):
+            text = text[:-2]
+        return text.lstrip('0') or '0'
 
-    # 2. 通过station_no将筛选结果与basic3匹配，并添加income列
-    basic3 = basic3.merge(filtered_income, on='station_no', how='left')
+    def _month_key(value):
+        if pd.isna(value):
+            return ''
+        text = str(value).strip()
+        if text.endswith('.0'):
+            text = text[:-2]
+        return ''.join(ch for ch in text if ch.isdigit())[:6]
+
+    # 2. 只取当月收入，并按站点聚合，避免同一站点多条记录造成重复或不稳定匹配。
+    income_current = income1.copy()
+    income_current['_station_key'] = income_current['station_no'].map(_station_key)
+    income_current['_month_key'] = income_current['cba_month'].map(_month_key)
+    income_current['income'] = pd.to_numeric(
+        income_current['income'], errors='coerce'
+    ).replace([np.inf, -np.inf], np.nan).fillna(0)
+    filtered_income = (
+        income_current[income_current['_month_key'] == _month_key(M)]
+        .groupby('_station_key', as_index=False)['income'].sum()
+    )
+
+    # 3. 通过标准化后的站点编号匹配收入；没有当月收入记录时明确按 0 处理。
+    basic3['_station_key'] = basic3['station_no'].map(_station_key)
+    basic3 = basic3.merge(filtered_income, on='_station_key', how='left')
+    unmatched_income_count = int(basic3['income'].isna().sum())
+    basic3['income'] = pd.to_numeric(
+        basic3['income'], errors='coerce'
+    ).replace([np.inf, -np.inf], np.nan).fillna(0)
+    zero_income_count = int((basic3['income'] == 0).sum())
+    basic3.drop(columns=['_station_key'], inplace=True)
+    logger.info(
+        f"重点站点当月收入匹配：未匹配 {unmatched_income_count} 站，"
+        f"匹配后收入为0（含未匹配） {zero_income_count} 站"
+    )
 
     # In[332]:
 
-    # 单瓦效益计算
-    basic3['benefits'] = basic3.apply(
-        lambda row: row['income'] / row['station_capacity'] / 1000 if row['station_capacity'] != 0 else 0,
-        axis=1
+    # 单瓦效益 = 当月收入 / 额定容量 / 1000；容量无效时按 0 处理。
+    basic3['benefits'] = np.where(
+        pd.to_numeric(basic3['station_capacity'], errors='coerce').fillna(0) > 0,
+        basic3['income'] / pd.to_numeric(basic3['station_capacity'], errors='coerce') / 1000,
+        0
     )
+    basic3['benefits'] = pd.to_numeric(basic3['benefits'], errors='coerce').replace([np.inf, -np.inf], 0).fillna(0)
     print(basic3.shape)
     print(basic3.info())
 
@@ -2082,9 +2131,9 @@ def runkeyStationInternalCompetition():
 
     # In[336]:
 
-    # 所有数据保留两位小数
+    # 单瓦效益保留4位小数，避免小额非零收益被显示为0。
     basic3['pricePkW'] = basic3['pricePkW'].round(2)
-    basic3['benefits'] = basic3['benefits'].round(2)
+    basic3['benefits'] = basic3['benefits'].round(4)
     basic3['设备折旧进度'] = basic3['设备折旧进度'].round(2)
     basic3['静态资金回本进度'] = basic3['静态资金回本进度'].round(2)
     basic3['plat_data_charging_volume'] = basic3['plat_data_charging_volume'].round(2)
@@ -2109,18 +2158,29 @@ def runkeyStationInternalCompetition():
 
     import json  # 需要导入 json 模块
 
+    # 基础信息表不输出投资金额或额定容量无效的站点。
+    # basic3 不再被后续板块使用，但仍单独创建输出数据集以明确边界。
+    basic3_output = basic3.loc[
+        (basic3['investment_amount'] > 0) & (basic3['station_capacity'] > 0)
+    ].copy()
+    excluded_station_count = len(basic3) - len(basic3_output)
+    logger.info(
+        f"重点站点基础信息表过滤无效投资/容量站点 {excluded_station_count} 站，"
+        f"有效输出 {len(basic3_output)} 站"
+    )
+
     # 创建站点名称筛选器（去重）
-    siteNameFilters = list(basic3['station_name'].unique())
+    siteNameFilters = list(basic3_output['station_name'].dropna().unique())
 
     # 创建站点类型筛选器（去重）
-    siteTypeFilters = list(basic3['station_category'].unique())
+    siteTypeFilters = list(basic3_output['station_category'].dropna().unique())
 
     # 将筛选器列表转换为 JSON 字符串
     siteNameFilters_json = json.dumps(siteNameFilters, ensure_ascii=False)
     siteTypeFilters_json = json.dumps(siteTypeFilters, ensure_ascii=False)
 
     # 按静态资金回本进度降序排序
-    basic3_sorted = basic3.sort_values('静态资金回本进度', ascending=False)
+    basic3_sorted = basic3_output.sort_values('静态资金回本进度', ascending=False)
 
     # 构建表数据（按排序后的顺序）
     tableData = []

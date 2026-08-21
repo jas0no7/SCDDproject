@@ -8,6 +8,8 @@ def runsocialCharger():
     import pandas as pd
     import numpy as np
     import json
+    import pymysql
+    from datetime import datetime
     from pandas.tseries.offsets import MonthBegin
     import calendar
     M, previous_month_str, year, last_year, last_year_month_str, P_M = Statistical_Time()
@@ -103,7 +105,7 @@ def runsocialCharger():
         # 同比计算
         x1 = d2.loc[d2['时间'].astype(str) == M, col_1].values[0]  # 当前月累计值
         x2 = gb1.loc[gb1['YM'] <= last_year_month_str, 'sum'].sum()  # 去年同期累计值
-        x3 = ((x1 - x2) / x2) * 100  # 增长率（百分比）
+        x3 = ((x1 - x2) / x2) * 100 if x2 != 0 else 0  # 增长率（百分比）
         S1 = x1
         S2 = round(float(x3), 2)  # 增长率（保留2位小数）
         return d2, S1, S2, x1
@@ -126,7 +128,8 @@ def runsocialCharger():
         last_year_month_str：同比年月
         """
         # 获取数据源
-        d1 = sql
+        d1 = sql.copy()
+        d1[time_column] = d1[time_column].astype(str).str.replace(r'\D', '', regex=True).str[:6]
         #     d1[cal_str] = d1[cal_str].fillna(0)
         gb1 = d1.groupby(by=time_column, as_index=False).agg({cal_str: 'sum'})
         gb1.columns = ['时间', 'sum']
@@ -134,11 +137,13 @@ def runsocialCharger():
         d2 = d2[['month', 'sum']]
         d2.columns = ['时间', col_1]
         d2[col_1] = [float(i) for i in d2[col_1]]
-        x1 = d2.loc[d2['时间'].astype(str) == M, col_1].values[0]
-        x2 = gb1.loc[gb1['时间'] == last_year_month_str, 'sum'].values[0]
+        current_values = d2.loc[d2['时间'].astype(str) == str(M), col_1]
+        last_year_values = gb1.loc[gb1['时间'] == str(last_year_month_str), 'sum']
+        x1 = current_values.iloc[0] if not current_values.empty and pd.notna(current_values.iloc[0]) else 0
+        x2 = last_year_values.iloc[0] if not last_year_values.empty and pd.notna(last_year_values.iloc[0]) else 0
         x1 = round(float(x1), 2)
         x2 = round(float(x2), 2)
-        x3 = ((x1 - x2) / x2) * 100
+        x3 = ((x1 - x2) / x2) * 100 if x2 != 0 else 0
         S1 = round(float(x1), 2)
         S2 = round(float(x3), 2)
         return d2, S1, S2, x1
@@ -161,20 +166,25 @@ def runsocialCharger():
         last_year_month_str：同比年月
         """
         # 获取数据源
-        d1 = df
-        #     d1[cal_str] = d1[cal_str].fillna(0)
+        d1 = df.copy()
+        d1[time_column] = d1[time_column].astype(str).str.replace(r'\D', '', regex=True).str[:6]
+        d1[cal_str] = pd.to_numeric(d1[cal_str], errors='coerce').replace([np.inf, -np.inf], np.nan)
         gb1 = d1.groupby(by=time_column, as_index=False).agg({cal_str: 'mean'})
         gb1.columns = ['时间', 'mean']
+        # 不同数据源的月份可能是整数或字符串，统一为 YYYYMM 后再匹配。
+        gb1['时间'] = gb1['时间'].astype(str).str.replace(r'\D', '', regex=True).str[:6]
         d2 = pd.merge(M_DF, gb1, how='left', left_on='month', right_on='时间')
-        d2['mean'] = d2['mean'].round(2)
+        d2['mean'] = pd.to_numeric(d2['mean'], errors='coerce').round(2)
         d2 = d2[['month', 'mean']]
         d2.columns = ['时间', col_1]
         d2[col_1] = [float(i) for i in d2[col_1]]
-        x1 = d2.loc[d2['时间'].astype(str) == M, col_1].values[0]
-        x2 = gb1.loc[gb1['时间'] == last_year_month_str, 'mean'].values[0]
+        current_values = d2.loc[d2['时间'].astype(str) == str(M), col_1]
+        last_year_values = gb1.loc[gb1['时间'] == str(last_year_month_str), 'mean']
+        x1 = current_values.iloc[0] if not current_values.empty and pd.notna(current_values.iloc[0]) else 0
+        x2 = last_year_values.iloc[0] if not last_year_values.empty and pd.notna(last_year_values.iloc[0]) else 0
         x1 = round(float(x1), 2)
         x2 = round(float(x2), 2)
-        x3 = ((x1 - x2) / x2) * 100
+        x3 = ((x1 - x2) / x2) * 100 if x2 != 0 else 0
         S1 = round(float(x1), 2)
         S2 = round(float(x3), 2)
         return d2, S1, S2, x1
@@ -194,7 +204,7 @@ def runsocialCharger():
         s2:文本参数2
         """
         # 获取数据源
-        d1 = sql
+        d1 = sql.copy()
         # 按需要分类的字段进行分组统计：城市/运营商
         gb1 = d1.groupby(by='city', as_index=False).agg({cal_str: 'sum'})
         gb1.columns = ['city', 'sum']
@@ -205,7 +215,9 @@ def runsocialCharger():
         m = round(gb1[col_1].mean(), 2)
         gb2 = pd.concat([pd.DataFrame(data=[['平均值', m]], columns=['城市', col_1]), gb1.iloc[:5, :2]])
         gb2.sort_values(by=col_1, ascending=False, inplace=True, ignore_index=True)
-        S1 = f'平台{s1}接入{s2}区域维度TOP3：{gb1.iloc[0, 0]}、{gb1.iloc[1, 0]}、{gb1.iloc[2, 0]}'
+        top_names = gb1['城市'].dropna().astype(str).head(3).tolist()
+        top_text = '、'.join(top_names) if top_names else '暂无数据'
+        S1 = f'平台{s1}接入{s2}区域维度TOP3：{top_text}'
         # 反转gb2的顺序
         gb2 = gb2.iloc[::-1].reset_index(drop=True)
         return gb1, gb2, S1
@@ -222,7 +234,8 @@ def runsocialCharger():
         time_column：时间对应列名
         cal_str：要统计的字段名称
         """
-        d1 = sql
+        d1 = sql.copy()
+        d1[time_column] = d1[time_column].astype(str).str.replace(r'\D', '', regex=True).str[:6]
         #     d1[cal_str] = d1[cal_str].fillna(0)
         d2 = d1.loc[d1[time_column].astype(str) == str(M), :]
         gb1 = d2.groupby(by='city', as_index=False).agg({cal_str: 'sum'})
@@ -236,7 +249,9 @@ def runsocialCharger():
         gb2 = pd.concat([pd.DataFrame(data=[['平均值', m]], columns=['城市', col_1]), gb1.iloc[:5, :2]])
         gb2.sort_values(by=col_1, ascending=False, inplace=True, ignore_index=True)
         gb2[col_1] = gb2[col_1].astype('float')
-        S1 = f'平台{s1}本月{s2}区域维度TOP3：{gb1.iloc[0, 0]}、{gb1.iloc[1, 0]}、{gb1.iloc[2, 0]}'
+        top_names = gb1['城市'].dropna().astype(str).head(3).tolist()
+        top_text = '、'.join(top_names) if top_names else '暂无数据'
+        S1 = f'平台{s1}本月{s2}区域维度TOP3：{top_text}'
         # 反转gb2的顺序
         gb2 = gb2.iloc[::-1].reset_index(drop=True)
         return gb1, gb2, S1
@@ -253,8 +268,9 @@ def runsocialCharger():
         time_column：时间对应列名
         cal_str：要统计的字段名称
         """
-        d1 = df
-        #     d1[cal_str] = d1[cal_str].fillna(0)
+        d1 = df.copy()
+        d1[time_column] = d1[time_column].astype(str).str.replace(r'\D', '', regex=True).str[:6]
+        d1[cal_str] = pd.to_numeric(d1[cal_str], errors='coerce').replace([np.inf, -np.inf], np.nan)
         d2 = d1.loc[d1[time_column].astype(str) == str(M), :]
         gb1 = d2.groupby(by='city', as_index=False).agg({cal_str: 'mean'})
         gb1.columns = ['city', 'mean']
@@ -264,11 +280,19 @@ def runsocialCharger():
         gb1['排名 '] = [i for i in range(1, (gb1.shape[0]) + 1)]
         gb1.columns = ['城市', col_1, '城市排名']
         gb1[col_1] = gb1[col_1].astype('float')
-        m = round(gb1[col_1].mean(), 2)
-        gb2 = pd.concat([pd.DataFrame(data=[['平均值', m]], columns=['城市', col_1]), gb1.iloc[:5, :2]])
-        gb2.sort_values(by=col_1, ascending=False, inplace=True, ignore_index=True)
-        gb2[col_1] = gb2[col_1].astype('float')
-        S1 = f'平台{s1}本月{s2}区域维度TOP3：{gb1.iloc[0, 0]}、{gb1.iloc[1, 0]}、{gb1.iloc[2, 0]}'
+        if gb1.empty:
+            gb2 = pd.DataFrame(columns=['城市', col_1])
+        else:
+            m = round(float(gb1[col_1].mean()), 2)
+            gb2 = pd.concat([
+                pd.DataFrame(data=[['平均值', m]], columns=['城市', col_1]),
+                gb1.iloc[:5, :2]
+            ])
+            gb2.sort_values(by=col_1, ascending=False, inplace=True, ignore_index=True)
+            gb2[col_1] = gb2[col_1].astype('float')
+        top_names = gb1['城市'].dropna().astype(str).head(3).tolist()
+        top_text = '、'.join(top_names) if top_names else '暂无数据'
+        S1 = f'平台{s1}本月{s2}区域维度TOP3：{top_text}'
         # 反转gb2的顺序
         gb2 = gb2.iloc[::-1].reset_index(drop=True)
         return gb1, gb2, S1
@@ -288,7 +312,7 @@ def runsocialCharger():
         s2:文本参数2
         """
         # 获取数据源
-        d1 = sql
+        d1 = sql.copy()
         #     d1[cal_str] = d1[cal_str].fillna(0)
         # 按需要分类的字段进行分组统计：城市/运营商
         gb1 = d1.groupby(by='merchant_name', as_index=False).agg({cal_str: 'sum'})
@@ -311,7 +335,9 @@ def runsocialCharger():
         m = round(gb2[col_1].mean(), 2)
         gb3 = pd.concat([pd.DataFrame(data=[['平均值', m]], columns=['运营商', col_1]), gb2.iloc[:5, :2]])
         gb3.sort_values(by=col_1, ascending=False, inplace=True, ignore_index=True)
-        S1 = f'平台{s1}接入{s2}运营商维度TOP3：{gb2.iloc[0, 0]}、{gb2.iloc[1, 0]}、{gb2.iloc[2, 0]}'
+        top_names = gb2['运营商'].dropna().astype(str).head(3).tolist()
+        top_text = '、'.join(top_names) if top_names else '暂无数据'
+        S1 = f'平台{s1}接入{s2}运营商维度TOP3：{top_text}'
         # 反转gb3的顺序
         gb3 = gb3.iloc[::-1].reset_index(drop=True)
         return gb2, gb3, S1
@@ -327,7 +353,8 @@ def runsocialCharger():
         cal_str：要统计的字段名称
         """
         # 获取数据源
-        d1 = sql
+        d1 = sql.copy()
+        d1[time_column] = d1[time_column].astype(str).str.replace(r'\D', '', regex=True).str[:6]
         d1[cal_str] = d1[cal_str].fillna(0)
         d1 = d1.loc[d1[time_column].astype(str) == str(M), :]
         # 按需要分类的字段进行分组统计：城市/运营商
@@ -353,7 +380,9 @@ def runsocialCharger():
         gb3 = pd.concat([pd.DataFrame(data=[['平均值', m]], columns=['运营商', col_1]), gb2.iloc[:5, :2]])
         gb3.sort_values(by=col_1, ascending=False, inplace=True, ignore_index=True)
         gb3[col_1] = gb3[col_1].astype('float')
-        S1 = f'平台{s1}本月{s2}运营商维度TOP3：{gb2.iloc[0, 0]}、{gb2.iloc[1, 0]}、{gb2.iloc[2, 0]}'
+        top_names = gb2['运营商'].dropna().astype(str).head(3).tolist()
+        top_text = '、'.join(top_names) if top_names else '暂无数据'
+        S1 = f'平台{s1}本月{s2}运营商维度TOP3：{top_text}'
         # 反转gb3的顺序
         gb3 = gb3.iloc[::-1].reset_index(drop=True)
         return gb2, gb3, S1
@@ -369,8 +398,9 @@ def runsocialCharger():
         cal_str：要统计的字段名称
         """
         # 获取数据源
-        d1 = df
-        d1[cal_str] = d1[cal_str].fillna(0)
+        d1 = df.copy()
+        d1[time_column] = d1[time_column].astype(str).str.replace(r'\D', '', regex=True).str[:6]
+        d1[cal_str] = pd.to_numeric(d1[cal_str], errors='coerce').replace([np.inf, -np.inf], np.nan)
         d1 = d1.loc[d1[time_column].astype(str) == str(M), :]
         # 按需要分类的字段进行分组统计：城市/运营商
         gb1 = d1.groupby(by='merchant_name', as_index=False).agg({cal_str: 'mean'})
@@ -392,11 +422,19 @@ def runsocialCharger():
         gb2['排名 '] = [i for i in range(1, (gb2.shape[0]) + 1)]
         gb2.columns = ['运营商', col_1, '运营商排名']
         gb2[col_1] = gb2[col_1].astype('float')
-        m = round(gb2[col_1].mean(), 2)
-        gb3 = pd.concat([pd.DataFrame(data=[['平均值', m]], columns=['运营商', col_1]), gb2.iloc[:5, :2]])
-        gb3.sort_values(by=col_1, ascending=False, inplace=True, ignore_index=True)
-        gb3[col_1] = gb3[col_1].astype('float')
-        S1 = f'平台{s1}本月{s2}运营商维度TOP3：{gb2.iloc[0, 0]}、{gb2.iloc[1, 0]}、{gb2.iloc[2, 0]}'
+        if gb2.empty:
+            gb3 = pd.DataFrame(columns=['运营商', col_1])
+        else:
+            m = round(float(gb2[col_1].mean()), 2)
+            gb3 = pd.concat([
+                pd.DataFrame(data=[['平均值', m]], columns=['运营商', col_1]),
+                gb2.iloc[:5, :2]
+            ])
+            gb3.sort_values(by=col_1, ascending=False, inplace=True, ignore_index=True)
+            gb3[col_1] = gb3[col_1].astype('float')
+        top_names = gb2['运营商'].dropna().astype(str).head(3).tolist()
+        top_text = '、'.join(top_names) if top_names else '暂无数据'
+        S1 = f'平台{s1}本月{s2}运营商维度TOP3：{top_text}'
         # 反转gb3的顺序
         gb3 = gb3.iloc[::-1].reset_index(drop=True)
         return gb2, gb3, S1
@@ -595,22 +633,8 @@ def runsocialCharger():
         charging_station cs
         LEFT JOIN rec_merchant rm ON cs.property_owner_merhant_id = rm.merchant_id
     WHERE 
-        -- 筛选条件：三种情况
-        (
-            -- 情况1：plat_access_mode在指定的第三方/社会商户类别中
-            rm.plat_access_mode IN ('三方', '社会商户', '第三方', '第三方单位', '第三方合作')
-            OR
-            -- 情况2：plat_access_mode为NULL（未设置接入模式）
-            rm.plat_access_mode IS NULL
-            OR
-            -- 情况3：特定接入模式且access_method为'社会站模型'
-            (
-                rm.plat_access_mode IN ('产业单位', '产业单位代运营', '代运营', '省公司代运营', '综合能源')
-                AND cs.access_method = '社会站模型'
-            )
-        )
-        -- 其他基础筛选条件
-        AND cs.operation_status IN ('投运')
+        cs.merchant_nature = '社会单位'
+        AND cs.operation_status IN ('投运','停运')
         AND cs.commissioning_time < '{P_M}'
     """
     # 时间对应列名
@@ -876,91 +900,66 @@ def runsocialCharger():
     # In[63]:
 
 
-    # 首先提取充电站基本信息（这部分不随时间变化，只需提取一次）
-    sql_station = f"""
-    SELECT
-        rm.merchant_name,
-        rm.plat_access_mode,
-        cs.*
-    FROM
-        charging_station cs
-        LEFT JOIN rec_merchant rm ON cs.property_owner_merhant_id = rm.merchant_id
-    WHERE 
-        -- 筛选条件
-        (
-            rm.plat_access_mode IN ('三方', '社会商户', '第三方', '第三方单位', '第三方合作')
-            OR rm.plat_access_mode IS NULL
-            OR (
-                rm.plat_access_mode IN ('产业单位', '产业单位代运营', '代运营', '省公司代运营', '综合能源')
-                AND cs.access_method = '社会站模型'
-            )
-        )
-        -- 其他基础条件
-        AND cs.operation_status IN ('投运','退运')
-        AND cs.commissioning_time < '{P_M}'
-    """
-
-    # 获取充电站数据
-    DF_station = SQL(sql_station)
-
-    # In[64]:
-
-
-    # 初始化空列表存储结果
-    df = []
-
-    # 循环处理不同时间范围
-    for i in range(len(begin1)):
-        # 提取订单数据（按时间范围）
+    # 按月汇总订单电量，后续功率利用率、充电量和金额指标共用这份数据。
+    monthly_orders = []
+    for start_time, end_time in zip(begin1, end1):
         sql_orders = f"""
-        select 
+        SELECT
             charging_station_no,
             DATE_FORMAT(order_create_time, '%Y%m') AS ym,
-            sum(trans_energy) as trans_energy,
-            sum(trans_amount) as trans_amount 
-        from fin_plat_data_order 
-        where order_create_time BETWEEN '{begin1[i]}' AND '{end1[i]}'
+            SUM(trans_energy) AS trans_energy,
+            SUM(trans_amount) AS trans_amount
+        FROM fin_plat_data_order
+        WHERE order_create_time BETWEEN '{start_time}' AND '{end_time}'
         GROUP BY charging_station_no, DATE_FORMAT(order_create_time, '%Y%m')
         """
+        monthly_orders.append(SQL(sql_orders))
 
-        # 获取订单数据
-        DF_orders = SQL(sql_orders)
-        print(f"{begin1[i]} 到 {end1[i]}")
+    order_metrics = (
+        pd.concat(monthly_orders, ignore_index=True)
+        if monthly_orders
+        else pd.DataFrame(columns=['charging_station_no', 'ym', 'trans_energy', 'trans_amount'])
+    )
+    order_metrics['ym'] = order_metrics['ym'].astype(str).str.replace(r'\D', '', regex=True).str[:6]
 
-        # 在内存中进行左连接
-        df1 = DF_station.merge(
-            DF_orders,
-            left_on='station_no',
-            right_on='charging_station_no',
-            how='left'
-        )
+    sql_energy_station = f"""
+    SELECT rm.merchant_name, rm.plat_access_mode, cs.*
+    FROM charging_station cs
+    LEFT JOIN rec_merchant rm ON cs.property_owner_merhant_id = rm.merchant_id
+    WHERE cs.merchant_nature = '社会单位'
+      AND cs.operation_status IN ('投运','停运')
+      AND cs.commissioning_time < '{P_M}'
+    """
+    order_energy_df = SQL(sql_energy_station).merge(
+        order_metrics,
+        left_on='station_no',
+        right_on='charging_station_no',
+        how='left'
+    )
+    order_energy_df = order_energy_df[order_energy_df['ym'].notna()].copy()
 
-        # 添加到结果列表
-        df.append(df1)
-        print(f"合并后得到 {len(df1)} 条记录")
-
-    # 合并所有时间段的结果
-    df = pd.concat(df)
-    print(f"合并所有时间段后总记录数: {len(df)}")
-
-    # 过滤掉ym为空的记录
-    df = df[~df['ym'].isna()]
-    print(f"过滤掉ym为空后记录数: {len(df)}")
-
-    # 合并M_DF_1数据
-    df = pd.merge(df, M_DF_1, left_on='ym', right_on='month', how='left')
-    print(f"最终记录数: {len(df)}")
-
-    # In[65]:
-
-
-    df['trans_energy'] = df['trans_energy'].astype(float)
-    df['station_capacity'] = df['station_capacity'].astype(float)
-    df['days'] = df['days'].astype(float)
-
-    df['pue'] = 0.0
-
-    df['pue'] = np.where(df['station_capacity'] == 0, 0, 100 * df['trans_energy'] / df['station_capacity'] / df['days'] / 24)
+    # 恢复历史计算口径：功率利用率 = 100 * 月充电量 / 额定容量 / 当月天数 / 24。
+    pue_df = order_energy_df.merge(
+        M_DF_1[['month', 'days']], left_on='ym', right_on='month', how='left'
+    )
+    pue_df['trans_energy'] = pd.to_numeric(
+        pue_df['trans_energy'], errors='coerce'
+    ).replace([np.inf, -np.inf], np.nan).fillna(0.0)
+    pue_df['station_capacity'] = pd.to_numeric(
+        pue_df['station_capacity'], errors='coerce'
+    ).replace([np.inf, -np.inf], np.nan)
+    pue_df['days'] = pd.to_numeric(
+        pue_df['days'], errors='coerce'
+    ).replace([np.inf, -np.inf], np.nan)
+    pue_df['pue'] = 0.0
+    valid_pue_mask = (pue_df['station_capacity'] > 0) & (pue_df['days'] > 0)
+    pue_df.loc[valid_pue_mask, 'pue'] = (
+        100 * pue_df.loc[valid_pue_mask, 'trans_energy']
+        / pue_df.loc[valid_pue_mask, 'station_capacity']
+        / pue_df.loc[valid_pue_mask, 'days']
+        / 24
+    )
+    pue_df['pue'] = pue_df['pue'].replace([np.inf, -np.inf], 0.0).fillna(0.0)
     # 时间对应列名
     time_column2 = 'ym'
 
@@ -968,19 +967,19 @@ def runsocialCharger():
 
     # 要统计的字段名称
     cal_str2 = 'pue'
-    df['pue'] = df['pue'].astype('float')
+    pue_df['pue'] = pue_df['pue'].astype('float')
 
     # In[66]:
 
 
-    print(df.info())
+    print(pue_df.info())
 
     # ### 站点维度
 
     # In[67]:
 
 
-    R6, S5, S6, x2 = Site_Dimension_3(df, time_column2, M_DF, cal_str2, '平台功率利用率', '功率利用率', '%', M, last_year_month_str)
+    R6, S5, S6, x2 = Site_Dimension_3(pue_df, time_column2, M_DF, cal_str2, '平台功率利用率', '功率利用率', '%', M, last_year_month_str)
     print('R6:', R6)
     print('S5:', S5)
     print('S6:', S6)
@@ -994,7 +993,13 @@ def runsocialCharger():
     # In[69]:
 
 
-    x2 = round(R6[R6['时间'].str.contains(str(year))]['平台功率利用率'].mean(), 2)
+    has_current_month_pue = (pue_df['ym'] == str(M)).any()
+    current_year_pue = pd.to_numeric(
+        R6.loc[R6['时间'].str.startswith(str(year)), '平台功率利用率'],
+        errors='coerce'
+    ).replace([np.inf, -np.inf], np.nan)
+    year_pue_mean = current_year_pue.mean()
+    x2 = round(float(year_pue_mean), 2) if has_current_month_pue and pd.notna(year_pue_mean) else 0.0
 
     # In[70]:
 
@@ -1005,7 +1010,12 @@ def runsocialCharger():
     # In[71]:
 
 
-    DF1 = bar_chart(R6, "时间", '%', M)
+    # 图表内部不保留 NaN/inf，避免序列化后出现非法数值。
+    R6_chart = R6.copy()
+    R6_chart['平台功率利用率'] = pd.to_numeric(
+        R6_chart['平台功率利用率'], errors='coerce'
+    ).replace([np.inf, -np.inf], np.nan).fillna(0.0)
+    DF1 = bar_chart(R6_chart, "时间", '%', M)
     V = [['当前平台功率利用率', S5, '%'], ['累计同比增长', S6, '%']]
     DF = word(V, DF1)
     DF
@@ -1042,7 +1052,7 @@ def runsocialCharger():
     # In[73]:
 
 
-    R7, R8, S7 = City_Dimension_3(df, time_column2, M, cal_str2, '社会桩', '站均功率利用率', '站均功率利用率（%）')
+    R7, R8, S7 = City_Dimension_3(pue_df, time_column2, M, cal_str2, '社会桩', '站均功率利用率', '站均功率利用率（%）')
     print('R7：\n', R7)
     print('R8：\n', R8)
     print('S7：\n', S7)
@@ -1055,7 +1065,8 @@ def runsocialCharger():
     tableColumn = pd.DataFrame(columns=['name', 'prop'], data=[['城市', 'city'], ['站均功率利用率（%）', 'pue'], ['城市排名', 'rank']]).to_json(orient='records', force_ascii=False)
     DF1 = pd.DataFrame(columns=['tableData', 'tableColumn'], data=[[tableData, tableColumn]])
     DF1
-    avg = R8[R8['城市'] == '平均值']['站均功率利用率（%）'].values[0]
+    city_avg_values = R8.loc[R8['城市'] == '平均值', '站均功率利用率（%）']
+    avg = float(city_avg_values.iloc[0]) if not city_avg_values.empty and pd.notna(city_avg_values.iloc[0]) else 0.0
     R8 = R8[R8['城市'] != '平均值']
     # R8 = AVG_(R8,'城市','累计接入额定功率（kW）')
     DF2 = bar_chart(R8, "城市", '%', M)
@@ -1103,7 +1114,7 @@ def runsocialCharger():
 
 
     # 函数调用
-    R9, R10, S8 = Operator_Dimension_3(df, time_column2, M, cal_str2, '社会桩', '站均功率利用率', '站均功率利用率（%）')
+    R9, R10, S8 = Operator_Dimension_3(pue_df, time_column2, M, cal_str2, '社会桩', '站均功率利用率', '站均功率利用率（%）')
     print('R9：\n', R9)
     print('R10：\n', R10)
     print('S8：\n', S8)
@@ -1120,7 +1131,8 @@ def runsocialCharger():
     # In[79]:
 
 
-    avg = R10[R10['运营商'] == '平均值']['站均功率利用率（%）'].values[0]
+    operator_avg_values = R10.loc[R10['运营商'] == '平均值', '站均功率利用率（%）']
+    avg = float(operator_avg_values.iloc[0]) if not operator_avg_values.empty and pd.notna(operator_avg_values.iloc[0]) else 0.0
     R10 = R10[R10['运营商'] != '平均值']
 
     # In[80]:
@@ -1169,6 +1181,7 @@ def runsocialCharger():
 
     # In[83]:
 
+    # 充电量指标复用上方已汇总的订单和站点数据。
 
     # 时间对应列名
     time_column3 = 'ym'
@@ -1182,7 +1195,7 @@ def runsocialCharger():
 
 
     # 函数调用
-    R10, S9, S10, x3 = Site_Dimension_2(df, time_column3, M_DF, cal_str3, '平台月充电量', '充电量', 'kWh', M, last_year_month_str)
+    R10, S9, S10, x3 = Site_Dimension_2(order_energy_df, time_column3, M_DF, cal_str3, '平台月充电量', '充电量', 'kWh', M, last_year_month_str)
     R10['平台月充电量'] = R10['平台月充电量'].round(2)
     print('S9:', S9)
     print('S10:', S10)
@@ -1251,7 +1264,7 @@ def runsocialCharger():
 
 
     # 函数调用
-    R11, R12, S11 = City_Dimension_2(df, time_column3, M, cal_str3, '社会桩', '充电量', '本月充电量（kWh）')
+    R11, R12, S11 = City_Dimension_2(order_energy_df, time_column3, M, cal_str3, '社会桩', '充电量', '本月充电量（kWh）')
     print('R11:\n', R11)
     print('R12:\n', R12)
     print('S11:\n', S11)
@@ -1312,7 +1325,7 @@ def runsocialCharger():
 
 
     # 函数调用
-    R13, R14, S12 = Operator_Dimension_2(df, time_column3, M, cal_str3, '社会桩', '充电量', '本月充电量（kWh）')
+    R13, R14, S12 = Operator_Dimension_2(order_energy_df, time_column3, M, cal_str3, '社会桩', '充电量', '本月充电量（kWh）')
     print('R13:\n', R13)
     print('R14:\n', R14)
     print('S12:\n', S12)
@@ -1385,13 +1398,36 @@ def runsocialCharger():
     # 要统计的字段名称
     cal_str4 = 'trans_amount'
 
+    # 金额指标单独使用“投运+退运+停运”站点范围，避免改变其他指标口径。
+    # 这里不能复用后面才定义的 sql，直接定义本板块所需的数据源。
+    sql_amount_station = f"""
+    SELECT
+        rm.merchant_name,
+        rm.plat_access_mode,
+        cs.*
+    FROM
+        charging_station cs
+        LEFT JOIN rec_merchant rm ON cs.property_owner_merhant_id = rm.merchant_id
+    WHERE
+        cs.merchant_nature = '社会单位'
+        AND cs.operation_status IN ('投运','退运','停运')
+        AND cs.commissioning_time < '{P_M}'
+    """
+    df_amount_global = SQL(sql_amount_station).merge(
+        order_metrics,
+        left_on='station_no',
+        right_on='charging_station_no',
+        how='left'
+    )
+    df_amount_global = df_amount_global[df_amount_global['ym'].notna()].copy()
+
     # ### 站点维度
 
     # In[102]:
 
 
     # 函数调用
-    R15, S13, S14, x4 = Site_Dimension_2(df, time_column4, M_DF, cal_str4, '平台本月经济收入', '经济收入', '元', M, last_year_month_str)
+    R15, S13, S14, x4 = Site_Dimension_2(df_amount_global, time_column4, M_DF, cal_str4, '平台本月经济收入', '经济收入', '元', M, last_year_month_str)
     print('S13:', S13)
     print('S14:', S14)
     print('R15:\n', R15)
@@ -1449,7 +1485,7 @@ def runsocialCharger():
 
 
     # 函数调用
-    R16, R17, S15 = City_Dimension_2(df, time_column4, M, cal_str4, '社会桩', '经济收入', '本月经济收入（元）')
+    R16, R17, S15 = City_Dimension_2(df_amount_global, time_column4, M, cal_str4, '社会桩', '经济收入', '本月经济收入（元）')
     print('R16:\n', R16)
     print('R17:\n', R17)
     print('S15:\n', S15)
@@ -1502,7 +1538,7 @@ def runsocialCharger():
 
 
     # 函数调用
-    R18, R19, S16 = Operator_Dimension_2(df, time_column4, M, cal_str4, '社会桩', '经济收入', '本月经济收入（元）')
+    R18, R19, S16 = Operator_Dimension_2(df_amount_global, time_column4, M, cal_str4, '社会桩', '经济收入', '本月经济收入（元）')
     print('R18:\n', R18)
     print('R19:\n', R19)
     print('S16:\n', S16)
@@ -1567,17 +1603,8 @@ def runsocialCharger():
         charging_station cs
         LEFT JOIN rec_merchant rm ON cs.property_owner_merhant_id = rm.merchant_id
     WHERE 
-        -- 筛选条件（三种情况）
-        (
-            rm.plat_access_mode IN ('三方', '社会商户', '第三方', '第三方单位', '第三方合作')
-            OR rm.plat_access_mode IS NULL
-            OR (
-                rm.plat_access_mode IN ('产业单位', '产业单位代运营', '代运营', '省公司代运营', '综合能源')
-                AND cs.access_method = '社会站模型'
-            )
-        )
-        -- 必要的基础条件
-        AND cs.operation_status IN ('投运')
+        cs.merchant_nature = '社会单位'
+        AND cs.operation_status IN ('投运','退运','停运')
         AND cs.commissioning_time < '{P_M}'
     """
 
@@ -1615,8 +1642,12 @@ def runsocialCharger():
             how='left'
         )
 
-        # 确保ym列存在（对于没有匹配收益记录的站点，ym会是NaN）
-        df1['ym'] = df1.get('ym', i)  # 如果没有ym列，使用当前月份
+        # 未匹配到收益时仍保留当前月份，后续按 0 参与月度统计。
+        if 'ym' not in df1.columns:
+            df1['ym'] = str(i)
+        else:
+            df1['ym'] = df1['ym'].astype('string').fillna(str(i))
+        df1['ym'] = df1['ym'].astype(str).str.replace(r'\D', '', regex=True).str[:6]
 
         # 添加到结果列表
         df.append(df1)
@@ -1860,7 +1891,7 @@ def runsocialCharger():
             if last_year_ym in dates.values:
                 current_val = df.loc[dates == current_ym, value_col].values[0]
                 last_year_val = df.loc[dates == last_year_ym, value_col].values[0]
-                growth = (current_val / last_year_val) - 1
+                growth = (current_val / last_year_val) - 1 if last_year_val != 0 else 0
                 yoy.append(growth)
             else:
                 yoy.append(np.nan)
@@ -1891,8 +1922,11 @@ def runsocialCharger():
         # 按指定列排序
         result_df = result_df.sort_values(by=sort_column, ascending=ascending)
 
-        # 添加排名列
-        result_df[rank_col_name] = result_df[sort_column].rank(method='min', ascending=False).astype(int)
+        # 空值不参与排名，使用可空整数避免 NaN 转 int 报错。
+        result_df[sort_column] = pd.to_numeric(result_df[sort_column], errors='coerce')
+        result_df[rank_col_name] = result_df[sort_column].rank(
+            method='min', ascending=ascending
+        ).astype('Int64')
 
         # 重置索引(可选)
         result_df = result_df.reset_index(drop=True)
@@ -1904,9 +1938,14 @@ def runsocialCharger():
 
 
     def imp_station(df, c1, c2, t1, t2, M_DF, no, R, M):
+        df = df.copy()
+        df[c1] = df[c1].astype(str).str.replace(r'\D', '', regex=True).str[:6]
+        df[c2] = pd.to_numeric(df[c2], errors='coerce')
+        df['station_no'] = df['station_no'].astype(str).str.strip()
+        station_no = str(no).strip()
         d1 = pd.merge(M_DF, df.groupby(c1).agg({c2: 'mean'}).reset_index(), left_on='month', right_on=c1, how='left')[['month', c2]]
         d1 = d1.rename(columns={c2: t1})
-        d2 = pd.merge(M_DF_1, df[df['station_no'] == no][[c1, c2]], left_on='month', right_on=c1, how='left')[['month', c2]]
+        d2 = pd.merge(M_DF_1, df[df['station_no'] == station_no][[c1, c2]], left_on='month', right_on=c1, how='left')[['month', c2]]
         d2 = d2.fillna(0)
         d2 = d2.rename(columns={c2: t2})
         d2 = calculate_monthly_growth(d2, 'month', t2)
@@ -1918,14 +1957,10 @@ def runsocialCharger():
         d2['同比增长率'] = d2['同比增长率'].replace([np.inf, -np.inf], 0)
 
         d3 = pd.merge(d1, d2, on='month', how='left')
-        d4 = df[df['ym'] == M][['station_no', c2]]
+        d4 = df[(df[c1] == str(M)) & df[c2].notna()][['station_no', c2]]
         d4 = add_rank_column(d4, c2)
-        try:
-            r = d4[d4['station_no'] == no]['rank'].values[0]
-        except IndexError:
-            # print("警告：数组为空，无法访问索引 0！")
-            value = None  # 或其他默认值
-            r = R
+        rank_values = d4.loc[d4['station_no'] == station_no, 'rank'].dropna()
+        r = int(rank_values.iloc[0]) if not rank_values.empty else R
 
         x = round(d3[d3['month'] == M][t2].values[0], 2)
         T1 = round(d3[d3['month'] == M][t1].values[0], 2)
@@ -1946,18 +1981,8 @@ def runsocialCharger():
         charging_station cs
         LEFT JOIN rec_merchant rm ON cs.property_owner_merhant_id = rm.merchant_id
     WHERE 
-        -- 核心筛选条件（三种情况）
-        (
-            rm.plat_access_mode IN ('三方', '社会商户', '第三方', '第三方单位', '第三方合作')
-            OR rm.plat_access_mode IS NULL  -- 接入模式为空的情况
-            OR (
-                -- 特定接入模式且access_method为社会站模型
-                rm.plat_access_mode IN ('产业单位', '产业单位代运营', '代运营', '省公司代运营', '综合能源')
-                AND cs.access_method = '社会站模型'
-            )
-        )
-        -- 必要的基础筛选条件
-        AND cs.operation_status IN ('投运')
+        cs.merchant_nature = '社会单位'
+        AND cs.operation_status IN ('投运','停运')
         AND cs.commissioning_time < '{P_M}'
     """
     df_station = SQL(sql)
@@ -1999,17 +2024,8 @@ def runsocialCharger():
         charging_station cs
         LEFT JOIN rec_merchant rm ON cs.property_owner_merhant_id = rm.merchant_id
     WHERE 
-        -- 筛选条件
-        (
-            rm.plat_access_mode IN ('三方', '社会商户', '第三方', '第三方单位', '第三方合作')
-            OR rm.plat_access_mode IS NULL
-            OR (
-                rm.plat_access_mode IN ('产业单位', '产业单位代运营', '代运营', '省公司代运营', '综合能源')
-                AND cs.access_method = '社会站模型'
-            )
-        )
-        -- 基础筛选条件
-        AND cs.operation_status IN ('投运','退运')
+        cs.merchant_nature = '社会单位'
+        AND cs.operation_status IN ('投运','停运')
         AND cs.commissioning_time < '{P_M}'
     """
 
@@ -2151,17 +2167,8 @@ def runsocialCharger():
         charging_station cs
         LEFT JOIN rec_merchant rm ON cs.property_owner_merhant_id = rm.merchant_id
     WHERE 
-        -- 核心筛选条件（三种情况）
-        (
-            rm.plat_access_mode IN ('三方', '社会商户', '第三方', '第三方单位', '第三方合作')
-            OR rm.plat_access_mode IS NULL
-            OR (
-                rm.plat_access_mode IN ('产业单位', '产业单位代运营', '代运营', '省公司代运营', '综合能源')
-                AND cs.access_method = '社会站模型'
-            )
-        )
-        -- 必要的基础条件
-        AND cs.operation_status IN ('投运','退运')
+        cs.merchant_nature = '社会单位'
+        AND cs.operation_status IN ('投运','退运','停运')
         AND cs.commissioning_time < '{P_M}'
     """
 
@@ -2196,8 +2203,12 @@ def runsocialCharger():
             how='left'
         )
 
-        # 确保ym列存在（对于没有匹配收益记录的站点，ym会是NaN）
-        # 这里不需要手动设置ym，因为原SQL是左连接，没有匹配的记录ym会自动为NaN
+        # 未匹配到收益时仍保留当前月份，后续按 0 参与站点趋势和排名统计。
+        if 'ym' not in df.columns:
+            df['ym'] = str(i)
+        else:
+            df['ym'] = df['ym'].astype('string').fillna(str(i))
+        df['ym'] = df['ym'].astype(str).str.replace(r'\D', '', regex=True).str[:6]
 
         # 添加到结果列表
         DF_profit_amount.append(df)
@@ -2277,7 +2288,22 @@ def runsocialCharger():
     # In[157]:
 
 
-    DF_sr_amount = DF_trans_energy
+    # 充电收入属于金额指标，单独按“投运+退运+停运”取站点。
+    sql_sr_amount_station = sql_station.replace("cs.operation_status IN ('投运','停运')", "cs.operation_status IN ('投运','退运','停运')")
+    DF_station_sr_amount = SQL(sql_sr_amount_station)
+    DF_sr_amount_orders = []
+    for i in range(len(begin)):
+        sql_sr_orders = f"""
+        select charging_station_no,
+               DATE_FORMAT(order_create_time, '%Y%m') AS ym,
+               sum(trans_amount) AS trans_amount
+        from fin_plat_data_order
+        where order_create_time BETWEEN '{begin[i]}' AND '{end[i]}'
+        GROUP BY charging_station_no, DATE_FORMAT(order_create_time, '%Y%m')
+        """
+        DF_sr_amount_orders.append(DF_station_sr_amount.merge(
+            SQL(sql_sr_orders), left_on='station_no', right_on='charging_station_no', how='inner'))
+    DF_sr_amount = pd.concat(DF_sr_amount_orders)
     DF_sr_amount['trans_amount'] = DF_sr_amount['trans_amount'].astype('float')
 
     # In[158]:
@@ -2413,16 +2439,31 @@ def runsocialCharger():
     # In[165]:
 
 
-    DF_plat_data_order = DF_trans_energy
-
-    # In[166]:
-
-
-    DF_plat_data_order = DF_plat_data_order[DF_plat_data_order['station_capacity'] != 0]
-    DF_plat_data_order = DF_plat_data_order[DF_plat_data_order['ym'].notna()]
+    # 站点月度功率利用率恢复为订单电量计算口径。
+    DF_plat_data_order = DF_trans_energy.copy()
+    DF_plat_data_order['ym'] = (
+        DF_plat_data_order['ym'].astype(str).str.replace(r'\D', '', regex=True).str[:6]
+    )
+    DF_plat_data_order['station_capacity'] = pd.to_numeric(
+        DF_plat_data_order['station_capacity'], errors='coerce'
+    ).replace([np.inf, -np.inf], np.nan)
+    DF_plat_data_order['trans_energy'] = pd.to_numeric(
+        DF_plat_data_order['trans_energy'], errors='coerce'
+    ).replace([np.inf, -np.inf], np.nan).fillna(0.0)
+    DF_plat_data_order = DF_plat_data_order[
+        DF_plat_data_order['ym'].str.len().eq(6)
+        & (DF_plat_data_order['station_capacity'] > 0)
+    ].copy()
     DF_plat_data_order['day'] = DF_plat_data_order['ym'].apply(get_days_in_month)
-    DF_plat_data_order['trans_energy'] = DF_plat_data_order['trans_energy'].astype('float')
-    DF_plat_data_order['pue'] = (DF_plat_data_order['trans_energy'] / DF_plat_data_order['station_capacity'] / DF_plat_data_order['day'] / 24)*100
+    DF_plat_data_order['pue'] = (
+        100 * DF_plat_data_order['trans_energy']
+        / DF_plat_data_order['station_capacity']
+        / DF_plat_data_order['day']
+        / 24
+    )
+    DF_plat_data_order['pue'] = (
+        DF_plat_data_order['pue'].replace([np.inf, -np.inf], 0.0).fillna(0.0)
+    )
 
     # In[ ]:
 
@@ -2499,17 +2540,8 @@ def runsocialCharger():
         charging_station cs
         LEFT JOIN rec_merchant rm ON cs.property_owner_merhant_id = rm.merchant_id
     WHERE 
-        -- 核心筛选条件
-        (
-            rm.plat_access_mode IN ('三方', '社会商户', '第三方', '第三方单位', '第三方合作')
-            OR rm.plat_access_mode IS NULL
-            OR (
-                rm.plat_access_mode IN ('产业单位', '产业单位代运营', '代运营', '省公司代运营', '综合能源')
-                AND cs.access_method = '社会站模型'
-            )
-        )
-        -- 基础业务条件
-        AND cs.operation_status IN ('投运')
+        cs.merchant_nature = '社会单位'
+        AND cs.operation_status IN ('投运','停运')
         AND cs.commissioning_time < '{P_M}'
     """
     df_gun = SQL(sql)
@@ -2578,6 +2610,254 @@ def runsocialCharger():
     # In[180]:
 
 
+    # 从 scdd_rec_rules 反编译清分规则，并在读取前刷新 dp_profit_sharing1
+    rule_data = SQL("""
+    SELECT rules_id, merchant_id, biz_mode, profit_detail
+    FROM scdd_rec_rules
+    ORDER BY rules_id
+    """)
+
+    station_merchant_data = SQL("""
+    SELECT rr.station_on AS station_no, rr.merchant_id
+    FROM rec_merchant_rec_station rr
+    WHERE rr.station_on IS NOT NULL
+    """)
+
+    biz_mode_names = {
+        1: '场地方分成', 2: '接入', 3: '代运营',
+        4: '自营', 5: '多方合作', 6: '有序单位'
+    }
+    calc_col_names = {
+        '1': '清分服务费-按比例', '2': '清分电量-按金额',
+        '3': '总服务费-按比例', '4': '交易电量-按金额',
+        '5': '清分金额-按金额', '6': '清分金额-按比例',
+        '7': '清分电量-按比例', '8': '清分电费-按比例'
+    }
+    percent_calc_cols = {'1', '3', '6', '7', '8'}
+    annual_car_percent_cols = {'1', '3', '5', '8'}
+
+    def clean_rule_remark(value):
+        text = str(value or '').strip()
+        for prefix in ('备注：', '备注:'):
+            if text.startswith(prefix):
+                return text[len(prefix):].lstrip(' \t\r\n')
+        return text
+
+    def collect_station_nos(value):
+        result = set()
+        if isinstance(value, dict):
+            station_list = value.get('stationNoS')
+            if isinstance(station_list, list):
+                result.update(str(item) for item in station_list if item not in (None, ''))
+            for child in value.values():
+                result.update(collect_station_nos(child))
+        elif isinstance(value, list):
+            for child in value:
+                result.update(collect_station_nos(child))
+        return result
+
+    def format_rule_value(value, calc_col, percentage_cols=None):
+        if value in (None, ''):
+            return '未配置'
+        percentage_cols = percentage_cols or percent_calc_cols
+        try:
+            number = float(value)
+            if str(calc_col) in percentage_cols and -1 <= number <= 1:
+                number *= 100
+            number = int(number) if number.is_integer() else round(number, 6)
+        except (TypeError, ValueError):
+            number = value
+        unit = '%' if str(calc_col) in percentage_cols else '元'
+        return f'{number}{unit}'
+
+    def format_rule_date(value):
+        if value in (None, ''):
+            return '未配置时间'
+        try:
+            return datetime.fromtimestamp(float(value) / 1000).strftime('%Y-%m-%d')
+        except (TypeError, ValueError, OverflowError, OSError):
+            return str(value)
+
+    def format_tiers(items, calc_col, percentage_cols=None, station_no=None, time_tiers=False):
+        result = []
+        percentage_cols = percentage_cols or percent_calc_cols
+        for item in items or []:
+            if not isinstance(item, dict):
+                continue
+            item_stations = {str(value) for value in item.get('stationNoS', [])}
+            if station_no and item_stations and station_no not in item_stations:
+                continue
+            share_value = item.get('merchantProfitRatio')
+            share = format_rule_value(share_value, calc_col, percentage_cols)
+            electric_share = ''
+            if str(calc_col) in percentage_cols and share_value not in (None, ''):
+                try:
+                    merchant_percent = float(share_value)
+                    if -1 <= merchant_percent <= 1:
+                        merchant_percent *= 100
+                    electric_percent = round(100 - merchant_percent, 6)
+                    electric_percent = int(electric_percent) if electric_percent.is_integer() else electric_percent
+                    electric_share = f'，电动分成{electric_percent}%'
+                except (TypeError, ValueError):
+                    pass
+            if time_tiers:
+                result.append(
+                    f"{format_rule_date(item.get('timesSlot'))}之前商户分成{share}{electric_share}"
+                )
+            else:
+                lower = item.get('lowerLimit') if item.get('lowerLimit') not in (None, '') else 0
+                upper = item.get('upperLimit') if item.get('upperLimit') not in (None, '') else '以上'
+                result.append(f'{lower}至{upper}万kWh商户分成{share}{electric_share}')
+        return '；'.join(result)
+
+    def decode_profit_rule(detail, biz_mode, station_no):
+        calc_col = detail.get('profitCalcCol')
+        parts = [biz_mode_names.get(biz_mode, f'未知合作模型({biz_mode})')]
+        if calc_col is not None:
+            parts.append(f"计算口径：{calc_col_names.get(str(calc_col), str(calc_col))}")
+
+        if detail.get('isTimesSlot'):
+            tier_text = format_tiers(
+                detail.get('timesSlotInfo'), calc_col,
+                station_no=station_no, time_tiers=True
+            )
+            if tier_text:
+                parts.append(f'时间节点规则：{tier_text}')
+        elif detail.get('isUseAnnualEnergyLv') and detail.get('diffCarType'):
+            for label, key in (('内部车辆', 'internalCarProfit'), ('外部车辆', 'externalCarProfit')):
+                car_rule = detail.get(key) or {}
+                car_calc_col = car_rule.get('profitCalcCol')
+                tier_text = format_tiers(
+                    car_rule.get('energyLvProfit'), car_calc_col,
+                    annual_car_percent_cols
+                )
+                if tier_text:
+                    parts.append(f"{label}[{calc_col_names.get(str(car_calc_col), str(car_calc_col))}]：{tier_text}")
+        elif detail.get('isUseAnnualEnergyLv'):
+            tier_text = format_tiers(detail.get('energyLvProfit'), calc_col)
+            if tier_text:
+                parts.append(f'年度电量阶梯：{tier_text}')
+        elif detail.get('diffCarType'):
+            internal_col = detail.get('internalCarProfitCalcCol')
+            external_col = detail.get('externalCarProfitCalcCol')
+            parts.append(
+                f"内部车辆[{calc_col_names.get(str(internal_col), str(internal_col))}]商户分成"
+                f"{format_rule_value(detail.get('internalCarMerchantProfitRatio'), internal_col)}"
+            )
+            parts.append(
+                f"外部车辆[{calc_col_names.get(str(external_col), str(external_col))}]商户分成"
+                f"{format_rule_value(detail.get('externalCarMerchantProfitRatio'), external_col)}"
+            )
+        elif 'merchantProfitRatio' in detail:
+            parts.append(f"商户分成：{format_rule_value(detail.get('merchantProfitRatio'), calc_col)}")
+
+        if 'ddProfitRation' in detail:
+            parts.append(f"电动分成：{format_rule_value(detail.get('ddProfitRation'), calc_col)}")
+        if detail.get('cooperateInfo'):
+            cooperate_col = detail.get('cooperateProfitCalcCol')
+            cooperate_rules = [
+                f"商户{item.get('cooperateMerchantId')}分成"
+                f"{format_rule_value(item.get('cooperateProfitRatio'), cooperate_col)}"
+                for item in detail['cooperateInfo'] if isinstance(item, dict)
+            ]
+            if cooperate_rules:
+                parts.append('合作方：' + '、'.join(cooperate_rules))
+        for key, label, unit in (
+            ('venueFees', '场地费', '元'), ('omCosts', '运维费', '元/桩'),
+            ('parkingFee', '停车费', '元'), ('wireLossFee', '线损费', '元/kWh')
+        ):
+            if detail.get(key) not in (None, '', 0, '0'):
+                parts.append(f'{label}：{detail[key]}{unit}')
+        return '；'.join(parts)
+
+    latest_rules = {}
+    for _, rule_row in rule_data.iterrows():
+        raw_detail = rule_row['profit_detail']
+        if isinstance(raw_detail, dict):
+            detail = raw_detail
+        else:
+            try:
+                detail = json.loads(raw_detail or '{}')
+            except (TypeError, ValueError, json.JSONDecodeError):
+                detail = {}
+        if not isinstance(detail, dict):
+            detail = {}
+        try:
+            biz_mode = int(rule_row['biz_mode']) if pd.notna(rule_row['biz_mode']) else None
+        except (TypeError, ValueError):
+            biz_mode = None
+        rule = {
+            'rules_id': rule_row['rules_id'],
+            'merchant_id': str(rule_row['merchant_id']),
+            'biz_mode': biz_mode,
+            'detail': detail,
+            'station_nos': collect_station_nos(detail),
+            'remark': clean_rule_remark(detail.get('remark'))
+        }
+        latest_rules[str(rule_row['rules_id'])] = rule
+
+    station_merchants = {}
+    for _, relation in station_merchant_data.iterrows():
+        station_merchants.setdefault(str(relation['station_no']), set()).add(str(relation['merchant_id']))
+
+    profit_sharing_rows = []
+    for _, station in df_NO.iterrows():
+        station_no = str(station['station_no'])
+        matched_rules = [rule for rule in latest_rules.values() if station_no in rule['station_nos']]
+        matched_rules.sort(key=lambda item: item['rules_id'], reverse=True)
+
+        if matched_rules:
+            selected_rule = matched_rules[0]
+            rule_text = decode_profit_rule(
+                selected_rule['detail'], selected_rule['biz_mode'], station_no
+            )
+        else:
+            merchant_ids = station_merchants.get(station_no, set())
+            merchant_rules = [
+                rule for rule in latest_rules.values()
+                if rule['merchant_id'] in merchant_ids
+            ]
+            merchant_rules.sort(key=lambda item: item['rules_id'], reverse=True)
+            rule_text = next(
+                (rule['remark'] for rule in merchant_rules if rule['remark']),
+                '备注'
+            )
+
+        profit_sharing_rows.append((
+            station_no,
+            station.get('merchant_name') if pd.notna(station.get('merchant_name')) else '',
+            rule_text
+        ))
+
+    profit_conn = pymysql.connect(
+        host='10.177.58.100',
+        user='root',
+        password='edac123456',
+        database='scdd_db',
+        port=1106,
+        charset='utf8mb4'
+    )
+    try:
+        with profit_conn.cursor() as profit_cursor:
+            profit_cursor.executemany("""
+            INSERT INTO dp_profit_sharing1
+                (station_no, merchant_name, ddProfitRation, ddProfitRationP)
+            VALUES (%s, %s, %s, NULL)
+            ON DUPLICATE KEY UPDATE
+                merchant_name = VALUES(merchant_name),
+                ddProfitRation = VALUES(ddProfitRation),
+                ddProfitRationP = NULL
+            """, profit_sharing_rows)
+        profit_conn.commit()
+        logger.info(f'已刷新 {len(profit_sharing_rows)} 条站点清分规则')
+    except Exception:
+        profit_conn.rollback()
+        logger.exception('刷新 dp_profit_sharing1 失败')
+        raise
+    finally:
+        profit_conn.close()
+
+
     sql = """
     select station_no,ddProfitRation,ddProfitRationP from dp_profit_sharing1;
     """
@@ -2623,17 +2903,8 @@ def runsocialCharger():
         charging_station cs
         LEFT JOIN rec_merchant rm ON cs.property_owner_merhant_id = rm.merchant_id
     WHERE 
-        -- 核心筛选条件（三种情况）
-        (
-            rm.plat_access_mode IN ('三方', '社会商户', '第三方', '第三方单位', '第三方合作')
-            OR rm.plat_access_mode IS NULL
-            OR (
-                rm.plat_access_mode IN ('产业单位', '产业单位代运营', '代运营', '省公司代运营', '综合能源')
-                AND cs.access_method = '社会站模型'
-            )
-        )
-        -- 必要的基础条件
-        AND cs.operation_status IN ('投运')
+        cs.merchant_nature = '社会单位'
+        AND cs.operation_status IN ('投运','退运','停运')
         AND cs.commissioning_time < '{P_M}'
     """
 
@@ -2641,7 +2912,7 @@ def runsocialCharger():
     DF_station = SQL(sql_station)
     print(f"获取到 {len(DF_station)} 条充电站记录")
 
-    # 提取订单数据（指定时间范围）
+    # 提取订单金额数据（金额指标包含投运、退运、停运站点）
     sql_orders = f"""
     select 
         charging_station_no,
@@ -2684,7 +2955,7 @@ def runsocialCharger():
     # In[190]:
 
 
-    df_amount_1['gun_amount'] = df_amount_1['trans_amount'].fillna(0).astype('float') / df_amount['gun']
+    df_amount_1['gun_amount'] = df_amount_1['trans_amount'].fillna(0).astype('float') / df_amount_1['gun']
 
     # In[191]:
 
@@ -2740,17 +3011,8 @@ def runsocialCharger():
         charging_station cs
         LEFT JOIN rec_merchant rm ON cs.property_owner_merhant_id = rm.merchant_id
     WHERE 
-        -- 核心筛选条件（三种情况）
-        (
-            rm.plat_access_mode IN ('三方', '社会商户', '第三方', '第三方单位', '第三方合作')
-            OR rm.plat_access_mode IS NULL
-            OR (
-                rm.plat_access_mode IN ('产业单位', '产业单位代运营', '代运营', '省公司代运营', '综合能源')
-                AND cs.access_method = '社会站模型'
-            )
-        )
-        -- 必要的基础条件
-        AND cs.operation_status IN ('投运')
+        cs.merchant_nature = '社会单位'
+        AND cs.operation_status IN ('投运','停运')
         AND cs.commissioning_time < '{P_M}'
     """
 
@@ -2789,7 +3051,7 @@ def runsocialCharger():
     DF_trans_energy['gun'] = DF_trans_energy['dc_charge_point_count'].fillna(0) + DF_trans_energy['ac_charge_point_count'].fillna(0)
     DF_trans_energy = DF_trans_energy[DF_trans_energy['ym'] == M]
     DF_trans_energy = DF_trans_energy[DF_trans_energy['gun'] != 0]
-    DF_trans_energy['trans_energy'] = DF_trans_energy['trans_energy'].fillna(0).astype('float') / df_amount['gun']
+    DF_trans_energy['trans_energy'] = DF_trans_energy['trans_energy'].fillna(0).astype('float') / DF_trans_energy['gun']
     DF_trans_energy['Rank'] = DF_trans_energy['trans_energy'].rank(method='min', ascending=False).astype(int)
 
     # In[199]:
@@ -2831,7 +3093,7 @@ def runsocialCharger():
     # In[204]:
 
 
-    df_NO.iloc[0]['amount']
+    # df_NO 可能为空，后续循环本身可以自然生成空结果，无需固定读取首行。
 
     # In[205]:
 
@@ -2868,8 +3130,18 @@ def runsocialCharger():
         data['totalEconomyStations'] = [df_NO.iloc[i]['amount']]
         data['chargerCount'] = [df_NO.iloc[i]['gun']]
         data['totalPower'] = [df_NO.iloc[i]['station_capacity']]
-        data['siteCount'] = [df_NO.iloc[i]['ddProfitRation']]
-        data['imgUrl'] = [df_NO.iloc[i]['ddProfitRationP']]
+        profit_rule = df_NO.iloc[i]['ddProfitRation']
+        image_url = df_NO.iloc[i]['ddProfitRationP']
+        # 无图片时回退到清分规则；最终空值使用空字符串，避免 fillna 将其变成 0。
+        if image_url is None or pd.isna(image_url) or (
+                isinstance(image_url, str) and not image_url.strip()
+        ):
+            if profit_rule is None or pd.isna(profit_rule):
+                image_url = ''
+            else:
+                image_url = str(profit_rule).strip()
+        data['siteCount'] = [profit_rule]
+        data['imgUrl'] = [image_url]
         data['unitData'] = [pd.DataFrame(
             columns=['label', 'value'],
             data=[['站点名称', df_NO.iloc[i]['station_name']], ['站点地址', df_NO.iloc[i]['station_address']],
@@ -2945,7 +3217,17 @@ def runsocialCharger():
     # In[210]:
 
 
-    DF_TOP1 = [['累计接入充电枪数', str(DATA[0]), '个'],
+    def _finite_metric(value):
+        numeric_value = pd.to_numeric(value, errors='coerce')
+        if pd.isna(numeric_value) or not np.isfinite(float(numeric_value)):
+            return 0.0
+        return float(numeric_value)
+
+    # 写入 TOP1 前统一清理，禁止将 nan/inf 转换成字符串入库。
+    DATA = [_finite_metric(value) for value in DATA]
+    gun_count_text = str(int(DATA[0])) if DATA[0].is_integer() else str(DATA[0])
+
+    DF_TOP1 = [['累计接入充电枪数', gun_count_text, '个'],
                ['本年功率利用率', str(round(DATA[1], 2)), '%'],
                ['本年累计充电量', str(round(DATA[2] / 10000, 2)), '万kWh'],
                ['本年累计分成收入', str(round(DATA[3] / 10000, 2)), '万元'],
@@ -2965,7 +3247,7 @@ def runsocialCharger():
         data2 = [['本年站点累计充电量', str(round(data1[i], 2)), 'kWh'],
                  ['本年站点累计充电收入', str(round(data3[i] / 10000, 2)), '万元'],
                  ['本年站点单枪日均充电量', str(round(data4[i], 2)), 'kWh/枪'],
-                 ['本年站点功率利用率', str(round(data5[i] * 100, 2)), '%']]
+                 ['本年站点功率利用率', str(round(data5[i], 2)), '%']]
         DF2 = pd.DataFrame(columns=['title', 'value', 'unit'], data=data2)
         data2 = DF2.to_json(orient='records', force_ascii=False)
         df2 = pd.DataFrame(columns=['target'], data=[data2])
@@ -3081,11 +3363,16 @@ def runsocialCharger():
         chart3 = DF_3[DF_3['station_no'] == no][['axisData', 'chartData', 'YxisName', 'legendName', 'statisticsData']].to_json(orient='records', force_ascii=False)[1:-1]
         chart4 = DF_4[DF_4['station_no'] == no][['axisData', 'chartData', 'YxisName', 'legendName', 'statisticsData']].to_json(orient='records', force_ascii=False)[1:-1]
         chart5 = DF_5[DF_5['station_no'] == no][['axisData', 'chartData', 'YxisName', 'legendName', 'statisticsData']].to_json(orient='records', force_ascii=False)[1:-1]
-        chart6 = df_result[df_result['station_no'] == no][['data', 'titles', 'labels', 'units', 'station_name', 'station_no']].to_dict(orient='records')[0]
-        chart7 = DF_TOP2[DF_TOP2['station_no'] == no]['target'].values[0]
+        chart6_records = df_result[df_result['station_no'] == no][
+            ['data', 'titles', 'labels', 'units', 'station_name', 'station_no']
+        ].to_dict(orient='records')
+        chart6 = chart6_records[0] if chart6_records else {}
+        chart7_values = DF_TOP2.loc[DF_TOP2['station_no'] == no, 'target']
+        chart7 = chart7_values.iloc[0] if not chart7_values.empty else '[]'
         DF1 = pd.DataFrame(columns=['siteData', 'chart1', 'chart2', 'chart3', 'chart4', 'chart5', 'basicData'],
                            data=[[chart7, chart1, chart2, chart3, chart4, chart5, chart6]])
-        DF1['name'] = df_NO[df_NO['station_no'] == no]['station_name'].values[0]
+        station_names = df_NO.loc[df_NO['station_no'] == no, 'station_name']
+        DF1['name'] = station_names.iloc[0] if not station_names.empty else ''
         DF1['siteNumber'] = no
         #     print(df_NO[df_NO['station_no']==no]['station_name'])
         DF = pd.concat([DF, DF1])
@@ -3115,17 +3402,8 @@ def runsocialCharger():
         LEFT JOIN rec_merchant rm ON cs.property_owner_merhant_id = rm.merchant_id
         LEFT JOIN dp_station_low_lat ds ON ds.station_no = cs.station_no
     WHERE 
-        -- 核心筛选条件（三种情况）
-        (
-            rm.plat_access_mode IN ('三方', '社会商户', '第三方', '第三方单位', '第三方合作')
-            OR rm.plat_access_mode IS NULL
-            OR (
-                rm.plat_access_mode IN ('产业单位', '产业单位代运营', '代运营', '省公司代运营', '综合能源')
-                AND cs.access_method = '社会站模型'
-            )
-        )
-        -- 必要的基础条件
-        AND cs.operation_status IN ('投运')
+        cs.merchant_nature = '社会单位'
+        AND cs.operation_status IN ('投运','停运')
         AND cs.commissioning_time < '{P_M}'
     """
     DF_unit = SQL(sql)
@@ -3266,7 +3544,3 @@ def runsocialCharger():
 
 
     # In[ ]:
-
-
-
-

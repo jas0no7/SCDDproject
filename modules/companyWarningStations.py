@@ -119,8 +119,8 @@ def runcompanyWarningStations():
     charging_station cs
     LEFT JOIN rec_merchant rm ON cs.property_owner_merhant_id = rm.merchant_id
     where 
-    rm.merchant_name = '国网电动汽车服务（四川）有限公司'
-    and operation_status in ('投运','退运');
+    cs.merchant_nature = '电动公司'
+    and operation_status in ('投运','退运','停运');
     """
     df1 = SQL(sql1)
     df1.loc[df1['station_category'] == '高速', 'station_category'] = '高速公共'
@@ -134,6 +134,14 @@ def runcompanyWarningStations():
     print('筛选投运时间前：', df1.shape)
     df1 = df1[df1['commissioning_year_month'] <= M]
     print('筛选投运时间后：', df1.shape)
+
+    # 金额指标使用投运、退运、停运站点；非金额指标仅使用投运、停运站点。
+    amount_station_statuses = ['投运', '退运', '停运']
+    non_amount_station_statuses = ['投运', '停运']
+    amount_station_nos = set(df1.loc[df1['operation_status'].isin(amount_station_statuses), 'station_no'])
+    non_amount_station_nos = set(df1.loc[df1['operation_status'].isin(non_amount_station_statuses), 'station_no'])
+    print('金额指标站点数量（投运、退运、停运）：', len(amount_station_nos))
+    print('非金额指标站点数量（投运、停运）：', len(non_amount_station_nos))
 
     # In[13]:
 
@@ -204,7 +212,7 @@ def runcompanyWarningStations():
     # In[21]:
 
     # ==================注释==================
-    # 统计四川电动投资金额不为空的每个投运站点的总收入、总支出
+    # 金额指标统计投资金额不为空的投运、退运、停运站点总收入和总支出
     # station_no：站点编号
     # revenue：总收入
     # cost：总支出
@@ -234,8 +242,8 @@ def runcompanyWarningStations():
     charging_station cs
     LEFT JOIN rec_merchant rm ON cs.property_owner_merhant_id = rm.merchant_id
     where 
-    rm.merchant_name = '国网电动汽车服务（四川）有限公司'
-    and operation_status in ('投运','退运') and  investment_amount is not null) a
+    cs.merchant_nature = '电动公司'
+    and operation_status in ('投运','退运','停运') and  investment_amount is not null) a
     left join 
     (select * from station_cba_org_data
     where cba_month<='{M}') b
@@ -297,7 +305,8 @@ def runcompanyWarningStations():
     rec_merchant_rec_station rmr ON cs.station_no = rmr.station_on
     LEFT JOIN
     scdd_rec_rules sr ON rmr.merchant_id = sr.merchant_id
-    where property_owner_merhant_id =119
+    where cs.merchant_nature = '电动公司'
+    and cs.operation_status in ('投运','退运','停运')
     and  JSON_UNQUOTE(JSON_EXTRACT(sr.profit_detail, '$.parkingFee')) IS NOT NULL;
     """
     df4 = SQL(sql4)
@@ -335,8 +344,8 @@ def runcompanyWarningStations():
     charging_station cs
     LEFT JOIN rec_merchant rm ON cs.property_owner_merhant_id = rm.merchant_id
     where 
-    rm.merchant_name = '国网电动汽车服务（四川）有限公司'
-    and cs.operation_status in ('投运','退运')
+    cs.merchant_nature = '电动公司'
+    and cs.operation_status in ('投运','退运','停运')
     ) a
     left join 
     (select * from fin_rec_result_detail where rec_month <={M} and merchant_id != 119 ) b
@@ -425,8 +434,8 @@ def runcompanyWarningStations():
     charging_station cs
     LEFT JOIN rec_merchant rm ON cs.property_owner_merhant_id = rm.merchant_id
     where 
-    rm.merchant_name = '国网电动汽车服务（四川）有限公司'
-    and operation_status in ('投运','退运') and  investment_amount is not null) a
+    cs.merchant_nature = '电动公司'
+    and operation_status in ('投运','退运','停运') and  investment_amount is not null) a
     left join 
     (select * from station_cba_org_data
     where cba_month<='{M}') b
@@ -496,8 +505,8 @@ def runcompanyWarningStations():
 
     # In[42]:
 
-    # 筛选当前四川电动旗下投运状态的全量站点数据+技改站
-    data1 = df1[((df1['operation_status'] == '投运') |
+    # 金额指标筛选四川电动旗下投运、退运、停运状态的全量站点数据+技改站
+    data1 = df1[(df1['operation_status'].isin(amount_station_statuses) |
                  (df1['station_no'].isin(["300003000100002472",
                                           "300003000100002473",
                                           "300003013200011",
@@ -520,8 +529,8 @@ def runcompanyWarningStations():
     # 合并站点补贴数据
     print('含有补贴的站点数量：', df2_cal.shape)
     data2 = pd.merge(data1, df2_cal, how='left', on='station_no').fillna(0)
-    print('合并后的投运的站点数量：', data2.shape)
-    print('四川电动投运站点中含有补贴的站点的数量：', data2[data2['total_subsidy'] != 0].shape)
+    print('金额指标合并后的投运、退运、停运站点数量：', data2.shape)
+    print('投运、退运、停运站点中含有补贴的站点数量：', data2[data2['total_subsidy'] != 0].shape)
     data2.head(1)
 
     # ## 运营数据合并
@@ -530,8 +539,8 @@ def runcompanyWarningStations():
 
     # 合并各站点的运营总投入和总支出
     data3 = pd.merge(data2, df3_cal, how='left', on='station_no').fillna(0)
-    print('合并后的投运的站点数量：', data3.shape)
-    print('四川电动投运站点中含有运营数据的站点的数量：', data3[data3['revenue'] != 0].shape)
+    print('金额指标合并后的投运、退运、停运站点数量：', data3.shape)
+    print('投运、退运、停运站点中含有运营数据的站点数量：', data3[data3['revenue'] != 0].shape)
     data3.head(1)
 
     # ## 站点租金合并
@@ -540,8 +549,8 @@ def runcompanyWarningStations():
 
     # 合并站点租金
     data4 = pd.merge(data3, df4, how='left', on='station_no').fillna(0)
-    print('合并后的投运的站点数量：', data4.shape)
-    print('四川电动投运站点中含有租金数据的站点的数量：', data4[data4['parking_fee'] != 0].shape)
+    print('金额指标合并后的投运、退运、停运站点数量：', data4.shape)
+    print('投运、退运、停运站点中含有租金数据的站点数量：', data4[data4['parking_fee'] != 0].shape)
     data4.head(1)
 
     # ## 分成数据合并
@@ -550,8 +559,8 @@ def runcompanyWarningStations():
 
     # 合并站点分成
     data5 = pd.merge(data4, df5_cal, how='left', on='station_no').fillna(0)
-    print('合并后的投运的站点数量：', data5.shape)
-    print('四川电动投运站点中含有分成数据的站点的数量：', data5[data5['merchant_profit_amount'] != 0].shape)
+    print('金额指标合并后的投运、退运、停运站点数量：', data5.shape)
+    print('投运、退运、停运站点中含有分成数据的站点数量：', data5[data5['merchant_profit_amount'] != 0].shape)
     data5.head(1)
 
     # ## 运维数据合并
@@ -560,8 +569,8 @@ def runcompanyWarningStations():
 
     # 合并站点运维费
     data6 = pd.merge(data5, df6_cal, how='left', on='station_no').fillna(0)
-    print('合并后的投运的站点数量：', data6.shape)
-    print('四川电动投运站点中含有运维数据的站点的数量：', data6[data6['maintenance_cost'] != 0].shape)
+    print('金额指标合并后的投运、退运、停运站点数量：', data6.shape)
+    print('投运、退运、停运站点中含有运维数据的站点数量：', data6[data6['maintenance_cost'] != 0].shape)
     data6.head(1)
 
     # ## 当年补贴数据合并
@@ -575,8 +584,8 @@ def runcompanyWarningStations():
     # In[50]:
 
     data7 = pd.merge(data6, df2_year, how='left', on='station_no').fillna(0)
-    print('合并后的投运的站点数量：', data7.shape)
-    print('四川电动投运站点中含有当年补贴数据的站点的数量：', data7[data7['当年_total_subsidy'] != 0].shape)
+    print('金额指标合并后的投运、退运、停运站点数量：', data7.shape)
+    print('投运、退运、停运站点中含有当年补贴数据的站点数量：', data7[data7['当年_total_subsidy'] != 0].shape)
     data7.head(1)
 
     # ## 当年运营收入数据合并
@@ -598,8 +607,8 @@ def runcompanyWarningStations():
 
     # 合并当年运营收入
     data8 = pd.merge(data7, df3_year, how='left', on='station_no').fillna(0)
-    print('合并后的投运的站点数量：', data8.shape)
-    print('四川电动投运站点中含有当年运营收入数据的站点的数量：', data8[data8['当年_revenue'] != 0].shape)
+    print('金额指标合并后的投运、退运、停运站点数量：', data8.shape)
+    print('投运、退运、停运站点中含有当年运营收入数据的站点数量：', data8[data8['当年_revenue'] != 0].shape)
     data8.head(1)
 
     # # 技改站数据合并-特殊处理
@@ -1108,7 +1117,9 @@ def runcompanyWarningStations():
 
     # In[80]:
 
-    sd1 = Station_Data4[['站点编号', '站点类型', '站点容量']]
+    # 非金额指标独立使用投运、停运站点，退运站不进入目标集合和对比样本。
+    NonAmount_Base = Station_Data4[Station_Data4['站点编号'].isin(non_amount_station_nos)].copy()
+    sd1 = NonAmount_Base[['站点编号', '站点类型', '站点容量']]
     # 重复原数据框行，每个站点重复3次（对应3个年月）
     sd1_repeated = sd1.loc[np.repeat(sd1.index, len(recent_three_months))].reset_index(drop=True)
     # 创建年月列，按列表顺序循环赋值
@@ -1141,7 +1152,7 @@ def runcompanyWarningStations():
 
     # In[81]:
 
-    Station_Data5 = pd.merge(Station_Data4, sd8[sd8['年月'] == M][['站点编号',
+    Station_Data5 = pd.merge(NonAmount_Base, sd8[sd8['年月'] == M][['站点编号',
                                                                  '一次成功率',
                                                                  '是否低于95%',
                                                                  '一次成功率是否连续三月低于指标']],
@@ -1198,7 +1209,8 @@ def runcompanyWarningStations():
 
     # In[84]:
 
-    sd1 = Station_Data6[['站点编号', '站点类型', '站点容量']]
+    # 场地分成属于金额指标，重新从投运、退运、停运金额站点集合起算。
+    sd1 = Station_Data4[['站点编号', '站点类型', '站点容量']]
     # 重复原数据框行，每个站点重复3次（对应3个年月）
     sd1_repeated = sd1.loc[np.repeat(sd1.index, len(recent_three_months))].reset_index(drop=True)
     # 创建年月列，按列表顺序循环赋值
@@ -1237,7 +1249,7 @@ def runcompanyWarningStations():
     sd8 = pd.merge(sd6[sd6['年月'] == M], sd7[['站点编号', '分成是否连续三月高于指标']], how='left', on='站点编号')
     sd8.loc[sd8['分成是否连续三月高于指标'].isna(), '分成是否连续三月高于指标'] = '否'
 
-    Station_Data7 = pd.merge(Station_Data6, sd8[['站点编号', '站点场地其它商户分成占比',
+    Station_Data7 = pd.merge(Station_Data4, sd8[['站点编号', '站点场地其它商户分成占比',
                                                  '同类型同规模其他商户分成占比均值',
                                                  '分成是否高于平均值', '分成是否连续三月高于指标']],
                              how='left', on='站点编号').fillna(0)
@@ -1247,7 +1259,8 @@ def runcompanyWarningStations():
 
     # In[86]:
 
-    sd1 = Station_Data7[['站点编号', '站点类型', '站点容量']]
+    # 电损属于非金额指标，继续沿用投运、停运设备指标集合。
+    sd1 = Station_Data6[['站点编号', '站点类型', '站点容量']]
     # 重复原数据框行，每个站点重复3次（对应3个年月）
     sd1_repeated = sd1.loc[np.repeat(sd1.index, len(recent_three_months))].reset_index(drop=True)
     # 创建年月列，按列表顺序循环赋值
@@ -1290,7 +1303,7 @@ def runcompanyWarningStations():
     sd8 = pd.merge(sd6[sd6['年月'] == M], sd7[['站点编号', '电损是否连续三月高于指标']], how='left', on='站点编号')
     sd8.loc[sd8['电损是否连续三月高于指标'].isna(), '电损是否连续三月高于指标'] = '否'
 
-    Station_Data8 = pd.merge(Station_Data7, sd8[['站点编号', '电损',
+    Station_Data8 = pd.merge(Station_Data6, sd8[['站点编号', '电损',
                                                  '同类型同规模站点电损均值',
                                                  '电损是否高于平均值', '电损是否连续三月高于指标']],
                              how='left', on='站点编号').fillna(0)
@@ -1306,7 +1319,8 @@ def runcompanyWarningStations():
 
     a1 = df9[df9['年月'].isin(recent_three_months)].copy()
     a2 = df10[df10['年月'].isin(recent_three_months)].copy()
-    sd1 = pd.merge(Station_Data8[['站点编号', '站点类型', '站点容量']], a1, how='left', on='站点编号')
+    # 市场价格属于金额指标，使用投运、退运、停运金额站点集合。
+    sd1 = pd.merge(Station_Data7[['站点编号', '站点类型', '站点容量']], a1, how='left', on='站点编号')
     sd2 = pd.merge(sd1, a2, how='left', on=['站点编号', '年月'])
     sd2
 
@@ -1361,7 +1375,7 @@ def runcompanyWarningStations():
     sd10 = pd.merge(sd8[sd8['年月'] == M], sd9[['站点编号', '站点充电电费是否连续三月高于指标']], how='left', on='站点编号')
     sd10.loc[sd10['站点充电电费是否连续三月高于指标'].isna(), '站点充电电费是否连续三月高于指标'] = '否'
 
-    Station_Data9 = pd.merge(Station_Data8, sd10[['站点编号', '站点充电电费', '充电电费对比类型',
+    Station_Data9 = pd.merge(Station_Data7, sd10[['站点编号', '站点充电电费', '充电电费对比类型',
                                                   '充电电费对比均值',
                                                   '站点充电电费是否高于平均值',
                                                   '站点充电电费是否连续三月高于指标']],
@@ -1434,7 +1448,16 @@ def runcompanyWarningStations():
 
     # In[97]:
 
-    Station_Data11 = Station_Data10.copy()
+    non_amount_columns = [
+        '站点编号', '一次成功率', '是否低于95%', '一次成功率是否连续三月低于指标',
+        '设备一次成功率指标', '设备可用率', '是否低于99%',
+        '设备可用率是否连续三月低于指标', '设备可用率指标', '电损',
+        '同类型同规模站点电损均值', '电损是否高于平均值', '电损是否连续三月高于指标'
+    ]
+    NonAmount_Result = Station_Data8[non_amount_columns].copy()
+    NonAmount_Result['非金额指标适用'] = True
+    Station_Data11 = pd.merge(Station_Data10, NonAmount_Result, how='left', on='站点编号')
+    Station_Data11['非金额指标适用'] = Station_Data11['非金额指标适用'].eq(True)
 
     # In[98]:
 
@@ -1506,6 +1529,8 @@ def runcompanyWarningStations():
 
     Station_Data11['设备维度诊断结果-一次成功率'] = '暂无'
     for i in range(Station_Data11.shape[0]):
+        if not Station_Data11.loc[i, '非金额指标适用']:
+            continue
         # 站点取值
         a = Station_Data11.loc[i, '一次成功率']
         # 同类型平均值
@@ -1541,6 +1566,8 @@ def runcompanyWarningStations():
 
     Station_Data11['设备维度诊断结果-设备可用率'] = '暂无'
     for i in range(Station_Data11.shape[0]):
+        if not Station_Data11.loc[i, '非金额指标适用']:
+            continue
         # 站点取值
         a = Station_Data11.loc[i, '设备可用率']
         # 同类型平均值
@@ -1743,6 +1770,8 @@ def runcompanyWarningStations():
 
     Station_Data11['损耗维度诊断结果'] = '暂无'
     for i in range(Station_Data11.shape[0]):
+        if not Station_Data11.loc[i, '非金额指标适用']:
+            continue
         # 站点取值
         a = Station_Data11.loc[i, '电损']
         # 同类型平均值
@@ -1943,13 +1972,12 @@ def runcompanyWarningStations():
         data_list6 = [data_list6_1[0], data_list6_2[0]]
         dimensionData_dict6 = {'title': '市场价格维度', 'data': data_list6}
         #     print('市场价格维度：\n',dimensionData_dict6)
+        dimension_data = [dimensionData_dict1, dimensionData_dict2, dimensionData_dict3]
+        if Station_Data13.loc[i, '非金额指标适用']:
+            dimension_data.extend([dimensionData_dict4, dimensionData_dict5])
+        dimension_data.append(dimensionData_dict6)
         result_dict = {'siteNum': Station_Data13.loc[i, '站点编号'],
-                       'dimensionData': [dimensionData_dict1,
-                                         dimensionData_dict2,
-                                         dimensionData_dict3,
-                                         dimensionData_dict4,
-                                         dimensionData_dict5,
-                                         dimensionData_dict6],
+                       'dimensionData': dimension_data,
                        'month': M}
         result_list.append(result_dict)
 
@@ -1992,7 +2020,7 @@ def runcompanyWarningStations():
                           '市场价格维度诊断结果-站点充电电费',
                           '市场价格维度诊断结果-站点充电服务费',
                           '场地分成维度诊断结果',
-                          '损耗维度诊断结果']]
+                          '损耗维度诊断结果', '非金额指标适用']]
 
     # In[112]:
 
@@ -2024,6 +2052,8 @@ def runcompanyWarningStations():
 
             # 处理每个维度
             for title, cols in dimension_mapping.items():
+                if not row['非金额指标适用'] and title in {'设备维度', '损耗维度'}:
+                    continue
                 # 处理单列维度（投资、运维、场地分成、损耗）
                 if isinstance(cols, str):
                     content = row[cols] if pd.notna(row[cols]) else ""
@@ -2114,7 +2144,7 @@ def runcompanyWarningStations():
                           '同类型同规模单瓦造价平均值', '同类型同规模单瓦运维成本均值',
                           '设备一次成功率指标', '设备可用率指标',
                           '同类型同规模其他商户分成占比均值', '同类型同规模站点电损均值',
-                          '充电电费对比均值', '充电服务费对比均值']]
+                          '充电电费对比均值', '充电服务费对比均值', '非金额指标适用']]
 
     # In[116]:
 
@@ -2137,34 +2167,36 @@ def runcompanyWarningStations():
 
     sd2 = cal_proportionality(sd1)
     sd3 = sd2[['站点编号', '投资_x', '运维_x', '场地分成_x', '损耗_x', '设备_x', '市场价格_x']]
-    sd3 = sd3.fillna(0)
+    # 缺失的非金额维度保持为空，不能用 0 参与评级或雷达图归一化。
+    sd3 = sd3.replace([np.inf, -np.inf], np.nan)
     sd3.head(1)
 
     # In[117]:
 
     # 将六个维度的数据进行横向映射，大于0的维度，数据映射为1-2，等于0的映射为1，小于0的映射为0-1
     def normalize(sd3):
-        d1 = sd3[['投资_x', '运维_x', '场地分成_x', '损耗_x', '设备_x', '市场价格_x']].copy()
+        dimension_columns = ['投资_x', '运维_x', '场地分成_x', '损耗_x', '设备_x', '市场价格_x']
+        d1 = sd3[dimension_columns].copy()
         result_list = []
-        for i in range(d1.shape[0]):
-            list1 = list(d1.iloc[i, :])
-            lista = [i for i in list1 if i > 0]
-            if len(lista) > 0:
-                max_data = max([i for i in lista if i > 0])
-            listb = [i for i in list1 if i < 0]
-            if len(listb) > 0:
-                min_data = min([i for i in listb if i < 0])
+        for row_index in range(d1.shape[0]):
+            values = list(d1.iloc[row_index, :])
+            positive_values = [value for value in values if pd.notna(value) and value > 0]
+            negative_values = [value for value in values if pd.notna(value) and value < 0]
+            max_data = max(positive_values) if positive_values else None
+            min_data = min(negative_values) if negative_values else None
             new_list = []
-            for i in list1:
-                if i == 0:
+            for value in values:
+                if pd.isna(value):
+                    new_list.append(np.nan)
+                elif value == 0:
                     new_list.append(1)
-                elif i > 0:
-                    new_list.append(round(1 + (i / max_data), 2))
+                elif value > 0:
+                    new_list.append(round(1 + (value / max_data), 2))
                 else:
-                    new_list.append(round((i - min_data) / (-min_data), 2))
+                    new_list.append(round((value - min_data) / (-min_data), 2))
             result_list.append(new_list)
-        result = pd.DataFrame(result_list, columns=d1.columns)
-        result['站点编号'] = sd3[['站点编号']]
+        result = pd.DataFrame(result_list, columns=dimension_columns)
+        result['站点编号'] = sd3['站点编号'].values
         return result
 
     normalized_sd3 = normalize(sd3)
@@ -2182,58 +2214,27 @@ def runcompanyWarningStations():
         # 前端格式转换
         d1 = normalized_sd3.copy()
         result = []
-        indicator_names = ['投资', '运维', '场地分成', '损耗', '设备', '市场价格']
+        dimension_config = [
+            ('投资', '投资_x', 'lower'),
+            ('运维', '运维_x', 'lower'),
+            ('场地分成', '场地分成_x', 'lower'),
+            ('损耗', '损耗_x', 'lower'),
+            ('设备', '设备_x', 'higher'),
+            ('市场价格', '市场价格_x', 'lower')
+        ]
         for _, row in d1.iterrows():
-            # 站点数据和对比数据
-            site_values = [
-                row['投资_x'],
-                row['运维_x'],
-                row['场地分成_x'],
-                row['损耗_x'],
-                row['设备_x'],
-                row['市场价格_x']
-            ]
-            compare_values = [1, 1, 1, 1, 1, 1]  # 对比水平都是1
-
-            # 判断优势劣势维度
+            available_dimensions = [config for config in dimension_config if pd.notna(row[config[1]])]
+            indicator_names = [name for name, _, _ in available_dimensions]
+            site_values = [row[column] for _, column, _ in available_dimensions]
+            compare_values = [1] * len(available_dimensions)
             advantage_dims = []
             disadvantage_dims = []
-
-            # 投资维度：小于等于1为优势
-            if row['投资_x'] <= 1:
-                advantage_dims.append('投资')
-            else:
-                disadvantage_dims.append('投资')
-
-            # 运维维度：小于等于1为优势
-            if row['运维_x'] <= 1:
-                advantage_dims.append('运维')
-            else:
-                disadvantage_dims.append('运维')
-
-            # 场地分成维度：小于等于1为优势
-            if row['场地分成_x'] <= 1:
-                advantage_dims.append('场地分成')
-            else:
-                disadvantage_dims.append('场地分成')
-
-            # 损耗维度：小于等于1为优势
-            if row['损耗_x'] <= 1:
-                advantage_dims.append('损耗')
-            else:
-                disadvantage_dims.append('损耗')
-
-            # 设备维度：大于等于1为优势
-            if row['设备_x'] >= 1:
-                advantage_dims.append('设备')
-            else:
-                disadvantage_dims.append('设备')
-
-            # 市场价格维度：小于等于1为优势
-            if row['市场价格_x'] <= 1:
-                advantage_dims.append('市场价格')
-            else:
-                disadvantage_dims.append('市场价格')
+            for name, column, preferred_direction in available_dimensions:
+                is_advantage = row[column] >= 1 if preferred_direction == 'higher' else row[column] <= 1
+                if is_advantage:
+                    advantage_dims.append(name)
+                else:
+                    disadvantage_dims.append(name)
 
             # 构建problemDiagnosis
             problem_diagnosis = []
@@ -2247,9 +2248,18 @@ def runcompanyWarningStations():
                     "name": "劣势维度",
                     "content": "、".join(disadvantage_dims)
                 })
+            internal_compare_dims = [
+                name for name in indicator_names
+                if name in {'投资', '运维', '场地分成', '损耗', '设备'}
+            ]
+            remark_parts = []
+            if internal_compare_dims:
+                remark_parts.append('、'.join(internal_compare_dims) + '维度与同类型同规模站点平均水平进行对比')
+            if '市场价格' in indicator_names:
+                remark_parts.append('市场价格维度，具有竞争站点的，与周边竞争站点平均水平进行对比，无竞争站点的，与同类型同规模站点平均水平进行对比')
             problem_diagnosis.append({
                 "name": "备注",
-                "content": "运维、损耗、投资、设备、场地分成维度与同类型同规模站点平均水平进行对比；市场价格维度，具有竞争站点的，与周边竞争站点平均水平进行对比，无竞争站点的，与同类型同规模站点平均水平进行对比"
+                "content": "；".join(remark_parts)
             })
 
             # 构建最终结果
@@ -2310,7 +2320,3 @@ def runcompanyWarningStations():
     # In[ ]:
 
     # In[ ]:
-
-
-
-
