@@ -479,6 +479,28 @@ def runtypeMonitoringOverview():
     DF['in'] = DF['revenue'].astype('float') + DF['total_subsidy'].astype('float')
     DF['out'] = DF['cost'].astype('float') + DF['investment_amount'].astype('float') + DF[
         'merchant_profit_amount'].astype('float') + DF['maintenance_cost'].astype('float')
+
+    # 映射表只维护技改前后站点关系，所有金额仍从原业务表查询。
+    tech_upgrade_mapping = SQL("""
+    SELECT old_code, new_code
+    FROM dp_station_tech_upgrade_mapping
+    ORDER BY id
+    """)
+    if tech_upgrade_mapping.empty:
+        raise ValueError("dp_station_tech_upgrade_mapping 没有技改站点映射记录")
+
+    mapping_columns = ['old_code', 'new_code']
+    if tech_upgrade_mapping[mapping_columns].isna().any().any():
+        raise ValueError("dp_station_tech_upgrade_mapping 存在空的 old_code 或 new_code")
+    tech_upgrade_mapping[mapping_columns] = (
+        tech_upgrade_mapping[mapping_columns]
+        .astype(str)
+        .apply(lambda column: column.str.strip())
+    )
+    if (tech_upgrade_mapping[mapping_columns] == '').any().any():
+        raise ValueError("dp_station_tech_upgrade_mapping 存在空的 old_code 或 new_code")
+    tech_upgrade_old_codes = tech_upgrade_mapping['old_code'].tolist()
+
     sql1 = """
     SELECT 
       b.station_no,
@@ -505,67 +527,50 @@ def runtypeMonitoringOverview():
       SELECT cs.*
       FROM charging_station cs
       LEFT JOIN rec_merchant rm ON cs.property_owner_merhant_id = rm.merchant_id
+      INNER JOIN dp_station_tech_upgrade_mapping tech_mapping
+        ON BINARY cs.station_no = BINARY tech_mapping.old_code
       WHERE 
         cs.merchant_nature = "电动公司"
         AND investment_amount IS NOT NULL
-        AND cs.station_name IN (
-          '四川省成都市彭州市濛阳镇供电所电动汽车充电站',
-          '沪蓉高速遂宁服务区公共充电站成都方向',
-          '沪蓉高速遂宁服务区公共充电站上海方向',
-          '四川省成都市成华区麻石桥充电站',
-          '四川省成都市成华区麻石桥充电站二期'
-        )
     ) a
     LEFT JOIN station_cba_org_data b ON a.station_no = b.station_no
     GROUP BY a.station_name, b.station_no
 
     """
     df1 = SQL(sql1)
-    sql2 = """select station_no,sum(total_subsidy) as total_subsidy from dp_subsidy_NEW
-    where station_no IN (
-      "300003000100002472",
-      "300003000100002473",
-      "300003013200011",
-      "300003013200099",
-      "300003013200105",
-      "300003013200108"
-    )
-    GROUP BY station_no"""
+    sql2 = """
+    SELECT subsidy.station_no, SUM(subsidy.total_subsidy) AS total_subsidy
+    FROM dp_subsidy_NEW subsidy
+    INNER JOIN dp_station_tech_upgrade_mapping tech_mapping
+      ON BINARY subsidy.station_no = BINARY tech_mapping.old_code
+    GROUP BY subsidy.station_no
+    """
     df2 = SQL(sql2)
     sql3 = """SELECT 
-     station_no,investment_amount
+     cs.station_no,cs.investment_amount
     FROM charging_station cs
     LEFT JOIN rec_merchant rm ON cs.property_owner_merhant_id = rm.merchant_id
+    INNER JOIN dp_station_tech_upgrade_mapping tech_mapping
+      ON BINARY cs.station_no = BINARY tech_mapping.old_code
     WHERE 
       cs.merchant_nature = "电动公司"
-      AND cs.station_no IN (
-      "300003000100002472",
-      "300003000100002473",
-      "300003013200011",
-      "300003013200099",
-      "300003013200105",
-      "300003013200108"
-      )"""
+    """
     df3 = SQL(sql3)
     sql3_1 = f"""
-    select station_no, stat_time as cba_month,maintenance_cost from  dp_station_maintenance_cost1
-    where 
-    (stat_time <{M_next}) and maintenance_cost>0 and station_no IN (
-      "300003000100002472",
-      "300003000100002473",
-      "300003013200011",
-      "300003013200099",
-      "300003013200105",
-      "300003013200108"
-      )
+    SELECT maintenance.station_no,
+           maintenance.stat_time AS cba_month,
+           maintenance.maintenance_cost
+    FROM dp_station_maintenance_cost1 maintenance
+    INNER JOIN dp_station_tech_upgrade_mapping tech_mapping
+      ON BINARY maintenance.station_no = BINARY tech_mapping.old_code
+    WHERE maintenance.stat_time < {M_next}
+      AND maintenance.maintenance_cost > 0
     """
     df3_1 = SQL(sql3_1)
     df3_1 = df3_1.groupby('station_no').agg({'maintenance_cost': 'sum'}).reset_index()
-    df4 = fin_rec_result_detail[fin_rec_result_detail['station_no'].isin(["300003000100002472",
-                                                                          "300003000100002473",
-                                                                          "300003013200011",
-                                                                          "300003013200099",
-                                                                          "300003013200105"])].fillna(0)
+    df4 = fin_rec_result_detail[
+        fin_rec_result_detail['station_no'].astype(str).str.strip().isin(tech_upgrade_old_codes)
+    ].fillna(0)
     df_temp = pd.merge(pd.merge(df1, df2, on='station_no', how='left'), df3, on='station_no', how='left')
     df_temp = pd.merge(df_temp, df3_1, on='station_no', how='left')
     df_temp = pd.merge(df_temp, df4, on='station_no', how='left')
@@ -577,37 +582,21 @@ def runtypeMonitoringOverview():
     df_temp['in'] = df_temp['revenue'].astype('float') + df_temp['total_subsidy'].astype('float')
     df_temp['out'] = df_temp['cost'].astype('float') + df_temp['investment_amount'].astype('float') + df_temp[
         'merchant_profit_amount'].astype('float') + df_temp['maintenance_cost'].astype('float')
-    DF.loc[DF['station_no'] == '300003000100019488', 'in'] = DF[DF['station_no'] == '300003000100019488']['in'].values[
-                                                                 0] + \
-                                                             df_temp[df_temp['station_no'] == '300003013200108'][
-                                                                 'in'].values[0]
-    DF.loc[DF['station_no'] == '300003000100017539', 'in'] = DF[DF['station_no'] == '300003000100017539']['in'].values[
-                                                                 0] + \
-                                                             df_temp[df_temp['station_no'] == '300003000100002472'][
-                                                                 'in'].values[0]
-    DF.loc[DF['station_no'] == '300003000100017538', 'in'] = DF[DF['station_no'] == '300003000100017538']['in'].values[
-                                                                 0] + \
-                                                             df_temp[df_temp['station_no'] == '300003000100002473'][
-                                                                 'in'].values[0]
-    DF.loc[DF['station_no'] == '300003000100019487', 'in'] = DF[DF['station_no'] == '300003000100019487']['in'].values[
-                                                                 0] + \
-                                                             df_temp[df_temp['station_no'] == '300003013200011'][
-                                                                 'in'].values[0] + \
-                                                             df_temp[df_temp['station_no'] == '300003013200099'][
-                                                                 'in'].values[0]
-    DF.loc[DF['station_no'] == '300003000100019488', 'out'] = \
-    DF[DF['station_no'] == '300003000100019488']['out'].values[0] + \
-    df_temp[df_temp['station_no'] == '300003013200108']['out'].values[0]
-    DF.loc[DF['station_no'] == '300003000100017539', 'out'] = \
-    DF[DF['station_no'] == '300003000100017539']['out'].values[0] + \
-    df_temp[df_temp['station_no'] == '300003000100002472']['out'].values[0]
-    DF.loc[DF['station_no'] == '300003000100017538', 'out'] = \
-    DF[DF['station_no'] == '300003000100017538']['out'].values[0] + \
-    df_temp[df_temp['station_no'] == '300003000100002473']['out'].values[0]
-    DF.loc[DF['station_no'] == '300003000100019487', 'out'] = \
-    DF[DF['station_no'] == '300003000100019487']['out'].values[0] + \
-    df_temp[df_temp['station_no'] == '300003013200011']['out'].values[0] + \
-    df_temp[df_temp['station_no'] == '300003013200099']['out'].values[0]
+    # 一个技改后站点可能对应多个技改前站点，按 new_code 汇总旧站金额。
+    old_codes_by_new_code = (
+        tech_upgrade_mapping.groupby('new_code', sort=False)['old_code']
+        .agg(list)
+        .to_dict()
+    )
+    df_temp['station_no'] = df_temp['station_no'].astype(str).str.strip()
+    DF['station_no'] = DF['station_no'].astype(str).str.strip()
+    for new_code, old_codes in old_codes_by_new_code.items():
+        old_data = df_temp[df_temp['station_no'].isin(old_codes)]
+        new_mask = DF['station_no'].eq(new_code)
+        if not new_mask.any() or old_data.empty:
+            continue
+        DF.loc[new_mask, 'in'] += old_data['in'].sum()
+        DF.loc[new_mask, 'out'] += old_data['out'].sum()
     DF = DF[DF['investment_amount'] != 0]
     DF = DF[DF['station_category'].isin(target_categories)]
     huibenzhandian = DF[DF['in'] > DF['out']]
@@ -2743,95 +2732,6 @@ def runtypeMonitoringOverview():
     # DF = DF.fillna(0)
     # DF['in']=DF['revenue'].astype('float')+DF['total_subsidy'].astype('float')
     # DF['out']=DF['cost'].astype('float')+DF['investment_amount'].astype('float')+DF['merchant_profit_amount'].astype('float')
-    # sql1 = """
-    # SELECT
-    #   b.station_no,
-    #   SUM(
-    #     IFNULL(b.rec_data_elec_fee_revenue, 0) +
-    #     IFNULL(b.rec_data_service_fee_revenue, 0) +
-    #     IFNULL(b.other_revenue_battery_swap_services, 0) +
-    #     IFNULL(b.other_revenue_op_subsidies, 0) +
-    #     IFNULL(b.other_revenue_build_subsidies, 0) +
-    #     IFNULL(b.other_revenue_access_control_barriers, 0) +
-    #     IFNULL(b.other_revenue_dr, 0)
-    #   ) AS revenue,
-    #   SUM(
-    #     IFNULL(b.rec_cost_elec_fee, 0) +
-    #     IFNULL(b.rec_cost_actual_rec_amount, 0) +
-    #     IFNULL(b.rec_cost_plat_service, 0) +
-    #     IFNULL(b.rec_cost_rent, 0) +
-    #     IFNULL(b.om_cost_om, 0) +
-    #     IFNULL(b.om_cost_spare_parts, 0) +
-    #     IFNULL(b.om_cost_op_project, 0) +
-    #     IFNULL(b.fin_cost_depreciation + b.fin_cost_labor, 0)
-    #   ) AS cost
-    # FROM (
-    #   SELECT cs.*
-    #   FROM charging_station cs
-    #   LEFT JOIN rec_merchant rm ON cs.property_owner_merhant_id = rm.merchant_id
-    #   WHERE
-    #     cs.merchant_nature = "电动公司"
-    #     AND investment_amount IS NOT NULL
-    #     AND cs.station_name IN (
-    #       '四川省成都市彭州市濛阳镇供电所电动汽车充电站',
-    #       '沪蓉高速遂宁服务区公共充电站成都方向',
-    #       '沪蓉高速遂宁服务区公共充电站上海方向',
-    #       '四川省成都市成华区麻石桥充电站',
-    #       '四川省成都市成华区麻石桥充电站二期'
-    #     )
-    # ) a
-    # LEFT JOIN station_cba_org_data b ON a.station_no = b.station_no
-    # GROUP BY a.station_name, b.station_no
-
-    # """
-    # df1 = SQL(sql1)
-    # sql2="""select station_no,sum(total_subsidy) as total_subsidy from dp_subsidy_NEW
-    # where station_no IN (
-    #   "300003000100002472",
-    #   "300003000100002473",
-    #   "300003013200011",
-    #   "300003013200099",
-    #   "300003013200105",
-    #   "300003013200108"
-    # )
-    # GROUP BY station_no"""
-    # df2 = SQL(sql2)
-    # sql3 = """SELECT
-    #  station_no,investment_amount
-    # FROM charging_station cs
-    # LEFT JOIN rec_merchant rm ON cs.property_owner_merhant_id = rm.merchant_id
-    # WHERE
-    #   cs.merchant_nature = "电动公司"
-    #   AND cs.station_name IN (
-    #   "300003000100002472",
-    #   "300003000100002473",
-    #   "300003013200011",
-    #   "300003013200099",
-    #   "300003013200105",
-    #   "300003013200108"
-    #   )"""
-    # df3 = SQL(sql3)
-    # df4 = fin_rec_result_detail[fin_rec_result_detail['station_no'].isin(["300003000100002472",
-    #   "300003000100002473",
-    #   "300003013200011",
-    #   "300003013200099",
-    #   "300003013200105"])].fillna(0)
-    # df_temp= pd.merge(pd.merge(df1,df2,on='station_no',how='left'),df3,on='station_no',how='left')
-    # df_temp = pd.merge(df_temp,df4,on='station_no',how='left')
-    # df_temp = df_temp.fillna(0)
-    # df_temp['revenue'] = df_temp['revenue']/10000
-    # df_temp['cost'] = df_temp['cost']/10000
-    # df_temp['in'] = df_temp['revenue'].astype('float')+df_temp['total_subsidy'].astype('float')
-    # df_temp['out'] = df_temp['cost'].astype('float')+df_temp['investment_amount'].astype('float')+df_temp['merchant_profit_amount'].astype('float')
-    # DF.loc[DF['station_no']=='300003000100019488','in']  =DF[DF['station_no']=='300003000100019488']['in'].values[0]+df_temp[df_temp['station_no']=='300003013200108']['in'].values[0]
-    # DF.loc[DF['station_no']=='300003000100017539','in']  =DF[DF['station_no']=='300003000100017539']['in'].values[0]+df_temp[df_temp['station_no']=='300003000100002472']['in'].values[0]
-    # DF.loc[DF['station_no']=='300003000100017538','in']  =DF[DF['station_no']=='300003000100017538']['in'].values[0]+df_temp[df_temp['station_no']=='300003000100002473']['in'].values[0]
-    # DF.loc[DF['station_no']=='300003000100019487','in']  =DF[DF['station_no']=='300003000100019487']['in'].values[0]+df_temp[df_temp['station_no']=='300003013200011']['in'].values[0]+df_temp[df_temp['station_no']=='300003013200099']['in'].values[0]
-    # DF.loc[DF['station_no']=='300003000100019488','out']  =DF[DF['station_no']=='300003000100019488']['out'].values[0]+df_temp[df_temp['station_no']=='300003013200108']['out'].values[0]
-    # DF.loc[DF['station_no']=='300003000100017539','out']  =DF[DF['station_no']=='300003000100017539']['out'].values[0]+df_temp[df_temp['station_no']=='300003000100002472']['out'].values[0]
-    # DF.loc[DF['station_no']=='300003000100017538','out']  =DF[DF['station_no']=='300003000100017538']['out'].values[0]+df_temp[df_temp['station_no']=='300003000100002473']['out'].values[0]
-    # DF.loc[DF['station_no']=='300003000100019487','out']  =DF[DF['station_no']=='300003000100019487']['out'].values[0]+df_temp[df_temp['station_no']=='300003013200011']['out'].values[0]+df_temp[df_temp['station_no']=='300003013200099']['out'].values[0]
-
     # In[209]:
 
     DF.loc[DF['station_category'] == '高速', 'station_category'] = '高速公共'

@@ -180,3 +180,66 @@ and JSON_UNQUOTE(JSON_EXTRACT(sr.profit_detail, '$.parkingFee')) IS NOT NULL;
 
 
 但是 在页面上 显示的却是：图片加载失败
+
+
+
+
+
+
+请你仔细研读这个代码中每个技改前后合并 等等的数据逻辑
+现在我已经将传入的固定 技改前后站点ID和站点名称 写入了mysql数据表，请你帮我改成从数据库中读取，另外需要left join charging_station
+这个数据库的配置为
+{192.168.0.217
+root
+edac123456
+1006
+scdd_db_v2}
+你可以在此对话框中 连上去看table的结构 但是不能将配置信息写入到代码中
+
+
+CREATE TABLE IF NOT EXISTS `dp_station_tech_upgrade_mapping` (
+  `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT COMMENT '主键ID',
+  `old_code` VARCHAR(50) NOT NULL COMMENT '技改前编号',
+  `old_name` VARCHAR(200) NOT NULL COMMENT '技改前名称',
+  `new_code` VARCHAR(50) NOT NULL COMMENT '技改后编号',
+  `new_name` VARCHAR(200) NOT NULL COMMENT '技改后名称',
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_old_code` (`old_code`),
+  KEY `idx_new_code` (`new_code`)
+) ENGINE=InnoDB
+  DEFAULT CHARSET=utf8mb4
+  COLLATE=utf8mb4_unicode_ci
+  COMMENT='充电站技改映射表';
+   
+INSERT INTO dp_station_tech_upgrade_mapping
+(old_code, old_name, new_code, new_name)
+VALUES
+('300003000100002472', '沪蓉高速遂宁服务区公共充电站成都方向',
+ '300003000100017539', '沪蓉高速遂宁服务区公共充电站（成都方向）'),
+
+('300003000100002473', '沪蓉高速遂宁服务区公共充电站上海方向',
+ '300003000100017538', '沪蓉高速遂宁服务区公共充电站（上海方向）'),
+
+('300003013200011', '四川省成都市成华区麻石桥充电站',
+ '300003000100019487', '四川省成都市成华区麻石桥城市公共充电站'),
+
+('300003013200099', '四川省成都市成华区麻石桥充电站二期',
+ '300003000100019487', '四川省成都市成华区麻石桥城市公共充电站'),
+
+('300003013200108', '四川省成都市彭州市濛阳镇供电所电动汽车充电站',
+ '300003000100019488', '四川省成都市彭州市濛阳镇供电所公共充电站');
+
+
+现在这几个技改站点是 固定的站点，现在需要你保持 原来所有 技改站点的 所需要 的数据信息 全部都 由 原来的表select不变 ，但是 表的 技改前后的映射关系 变为从 
+dp_station_tech_upgrade_mapping中读取，且 仅用来体现技改站点技改前后的映射表
+
+
+
+
+
+
+
+
+
+
+所有 技改站点的 所需要 的数据信息 全部都 由 原来的表select，dp_station_tech_upgrade_mapping 仅用来体现技改站点技改前后的映射表   

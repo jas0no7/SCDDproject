@@ -1999,22 +1999,16 @@ def runpanoramaOverview():
 
     # In[687]:
 
-    # 技改站点编号已确认，共五个站。
-    # 技改前后站点编号发生变化，且当前状态已经不是投运状态了，故需特殊处理
-    # 其中：
-    # （1）技改后未投运：这个站编号暂时不放进去
-    # 300003013200105 四川省西昌市攀钢坤牛西钢钒充电站
-    # （2）合并两个：
-    # 300003013200011 四川省成都市成华区麻石桥充电站
-    # 300003013200099 四川省成都市成华区麻石桥充电站二期
-
-    # 对应关系
-
-    #   "300003000100002472",
-    #   "300003000100002473",
-    #   "300003013200011",
-    #   "300003013200099",
-    #   "300003013200108"
+    # 技改站点编号及技改前后对应关系仅从映射表读取。
+    # 技改站点的补贴、运营、租金、分成、运维等业务数据仍按原有站点表和业务表查询。
+    tech_mapping_sql = """
+    SELECT old_code, new_code
+    FROM dp_station_tech_upgrade_mapping
+    """
+    df_tech_mapping = SQL(tech_mapping_sql)
+    df_tech_mapping['old_code'] = df_tech_mapping['old_code'].astype(str)
+    df_tech_mapping['new_code'] = df_tech_mapping['new_code'].astype(str)
+    tech_old_codes = df_tech_mapping['old_code'].tolist()
 
     # ## 站点数据筛选
 
@@ -2024,13 +2018,9 @@ def runpanoramaOverview():
 
     # In[689]:
 
-    # 筛选当前四川电动旗下投运状态的全量站点数据+技改站
+    # 筛选当前四川电动旗下投运状态的全量站点数据+映射表中的技改站
     data1 = df1[((df1['operation_status'] == '投运') |
-                 (df1['station_no'].isin(["300003000100002472",
-                                          "300003000100002473",
-                                          "300003013200011",
-                                          "300003013200099",
-                                          "300003013200108"]))) &
+                 (df1['station_no'].isin(tech_old_codes))) &
                 (df1['investment_amount'] != 0)]
     print(data1.shape)
     data1.head(1)
@@ -2132,15 +2122,9 @@ def runpanoramaOverview():
 
     # In[701]:
 
-    # 将技改的5个站点编号对应修改为技改后的站点编号
+    # 根据映射表将技改前站点编号对应到技改后站点编号
     data9 = data8.copy()
-    mapping = {
-        "300003013200108": "300003000100019488",
-        "300003000100002472": "300003000100017539",
-        "300003000100002473": "300003000100017538",
-        "300003013200011": "300003000100019487",
-        "300003013200099": "300003000100019487"
-    }
+    mapping = dict(zip(df_tech_mapping['old_code'], df_tech_mapping['new_code']))
 
     # 定义需要替换的目标列
     target_cols = data9.columns[[0, 1, 2, 3, 4, 6, 7, 8, 9]]

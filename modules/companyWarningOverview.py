@@ -286,22 +286,8 @@ def runcompanyWarningOverview():
 
     # In[30]:
 
-    # 技改站点编号已确认，共五个站。
-    # 技改前后站点编号发生变化，且当前状态已经不是投运状态了，故需特殊处理
-    # 其中：
-    # （1）技改后未投运：这个站编号暂时不放进去
-    # 300003013200105 四川省西昌市攀钢坤牛西钢钒充电站
-    # （2）合并两个：
-    # 300003013200011 四川省成都市成华区麻石桥充电站
-    # 300003013200099 四川省成都市成华区麻石桥充电站二期
-
-    # 对应关系
-
-    #   "300003000100002472",
-    #   "300003000100002473",
-    #   "300003013200011",
-    #   "300003013200099",
-    #   "300003013200108"
+    # 技改前后站点编号发生变化，旧站的金额数据需归并到新站。
+    # 技改映射关系由 dp_station_tech_upgrade_mapping 统一维护。
 
     # ## 站点数据筛选
 
@@ -417,29 +403,124 @@ def runcompanyWarningOverview():
 
     # In[44]:
 
-    # 将技改的5个站点编号对应修改为技改后的站点编号
+    tech_upgrade_mapping = SQL("""
+    SELECT
+        m.old_code,
+        m.new_code,
+        old_cs.station_no AS old_station_no,
+        new_cs.station_no AS new_station_no,
+        new_cs.station_name AS new_station_name,
+        new_cs.station_category AS new_station_category,
+        new_cs.city AS new_city,
+        new_cs.operation_status AS new_operation_status,
+        new_cs.commissioning_time AS new_commissioning_time
+    FROM dp_station_tech_upgrade_mapping m
+    LEFT JOIN charging_station old_cs
+        ON BINARY old_cs.station_no = BINARY m.old_code
+    LEFT JOIN charging_station new_cs
+        ON BINARY new_cs.station_no = BINARY m.new_code
+    ORDER BY m.id
+    """)
+    if tech_upgrade_mapping.empty:
+        raise ValueError("dp_station_tech_upgrade_mapping 没有技改站点映射记录")
+
+    # 映射表只使用新旧站编号，所有站点属性及业务数据仍来自原业务表。
+    required_mapping_columns = ['old_code', 'new_code']
+    invalid_mapping = (
+        tech_upgrade_mapping[required_mapping_columns].isna().any(axis=1)
+        | tech_upgrade_mapping[required_mapping_columns]
+        .astype(str)
+        .apply(lambda column: column.str.strip().eq(''))
+        .any(axis=1)
+    )
+    if invalid_mapping.any():
+        raise ValueError(
+            "技改站点映射存在空编号: "
+            + repr(
+                tech_upgrade_mapping.loc[
+                    invalid_mapping, required_mapping_columns
+                ].to_dict('records')
+            )
+        )
+
+    missing_old_codes = tech_upgrade_mapping.loc[
+        tech_upgrade_mapping['old_station_no'].isna(), 'old_code'
+    ].tolist()
+    missing_new_codes = tech_upgrade_mapping.loc[
+        tech_upgrade_mapping['new_station_no'].isna(), 'new_code'
+    ].tolist()
+    if missing_old_codes or missing_new_codes:
+        raise ValueError(
+            "charging_station 缺少技改站点: "
+            f"old_code={missing_old_codes}, new_code={missing_new_codes}"
+        )
+
+    tech_upgrade_mapping[required_mapping_columns] = (
+        tech_upgrade_mapping[required_mapping_columns]
+        .astype(str)
+        .apply(lambda column: column.str.strip())
+    )
+    old_codes_by_new_code = (
+        tech_upgrade_mapping.groupby('new_code', sort=False)['old_code']
+        .agg(list)
+        .to_dict()
+    )
+
+    tech_upgrade_mapping['new_station_category'] = tech_upgrade_mapping[
+        'new_station_category'
+    ].replace({'高速': '高速公共'})
+    tech_upgrade_mapping['new_commissioning_time'] = pd.to_datetime(
+        tech_upgrade_mapping['new_commissioning_time']
+    )
+    tech_upgrade_mapping['new_commissioning_year_month'] = (
+        tech_upgrade_mapping['new_commissioning_time'].dt.strftime('%Y%m')
+    )
+    tech_upgrade_mapping['new_累计投运月份数'] = (
+        (current_date.year - tech_upgrade_mapping['new_commissioning_time'].dt.year) * 12
+        + (current_date.month - tech_upgrade_mapping['new_commissioning_time'].dt.month)
+        + (
+            current_date.day >= tech_upgrade_mapping['new_commissioning_time'].dt.day
+        ).astype(int)
+    )
+    tech_upgrade_mapping['new_设备折旧进度'] = (
+        tech_upgrade_mapping['new_累计投运月份数'] / (8 * 12)
+    )
+
+    # 映射表已在数据库中关联新旧 charging_station。
+    # 此处只将关联结果合并到金额明细，旧站金额字段保持原值。
     data9 = data8.copy()
-    mapping = {
-        "300003013200108": "300003000100019488",
-        "300003000100002472": "300003000100017539",
-        "300003000100002473": "300003000100017538",
-        "300003013200011": "300003000100019487",
-        "300003013200099": "300003000100019487"
-    }
+    identity_cols = [
+        'station_name', 'station_category', 'city', 'operation_status',
+        'commissioning_time', 'commissioning_year_month', '累计投运月份数',
+        '设备折旧进度'
+    ]
+    mapping_join = tech_upgrade_mapping[
+        [
+            'old_code', 'new_station_no', 'new_station_name',
+            'new_station_category', 'new_city', 'new_operation_status',
+            'new_commissioning_time', 'new_commissioning_year_month',
+            'new_累计投运月份数', 'new_设备折旧进度'
+        ]
+    ].rename(
+        columns={
+            'old_code': '_old_code',
+            **{f'new_{col}': f'_new_{col}' for col in identity_cols},
+            'new_station_no': '_new_station_no'
+        }
+    )
+    data9 = data9.merge(
+        mapping_join, how='left', left_on='station_no', right_on='_old_code'
+    )
 
-    # 定义需要替换的目标列
-    target_cols = data9.columns[[0, 1, 2, 3, 4, 6, 7, 8, 9]]
-
-    for old_val, new_val in mapping.items():
-        # 提取目标行的目标列数据
-        target_values = data9.loc[data9['station_no'] == new_val, target_cols]
-        # 替换对应行的目标列
-        if not target_values.empty:
-            data9.loc[data9['station_no'] == old_val, target_cols] = target_values.iloc[0].values
-
-    # In[45]:
-
-    data9[data9['station_no'] == '300003000100019487']
+    # 旧站行只在能找到新站主数据时替换身份字段，金额字段保持原值。
+    for col in identity_cols:
+        data9[col] = data9[f'_new_{col}'].combine_first(data9[col])
+    data9['station_no'] = data9['_new_station_no'].combine_first(data9['station_no'])
+    data9.drop(
+        columns=['_old_code', '_new_station_no']
+        + [f'_new_{col}' for col in identity_cols],
+        inplace=True
+    )
 
     # # 站点回本进度详情
 
@@ -494,17 +575,9 @@ def runcompanyWarningOverview():
 
     no_list = data10[data10['静态资金回本进度'] >= 100]['station_no'].to_list()
     for i in no_list:
-        # 技改数据特殊处理
-        if i == '300003000100019488':
-            x1 = df1[df1['station_no'].isin(['300003000100019488', '300003013200108'])]
-        elif i == '300003000100017539':
-            x1 = df1[df1['station_no'].isin(['300003000100017539', '300003000100002472'])]
-        elif i == '300003000100017538':
-            x1 = df1[df1['station_no'].isin(['300003000100017538', '300003000100002473'])]
-        elif i == '300003000100019487':
-            x1 = df1[df1['station_no'].isin(['300003000100019487', '300003013200011', '300003013200099'])]
-        else:
-            x1 = df1[df1['station_no'] == i]
+        # 技改站同时取新站及其全部旧站数据，普通站仅取自身。
+        related_station_codes = [i] + old_codes_by_new_code.get(i, [])
+        x1 = df1[df1['station_no'].isin(related_station_codes)]
         # 生成站点从投运开始的年月码表
         x1 = x1[['station_no', 'commissioning_time']]
         end_year = int(M[:4])
@@ -1700,5 +1773,3 @@ def runcompanyWarningOverview():
     # In[ ]:
 
     # In[ ]:
-
-

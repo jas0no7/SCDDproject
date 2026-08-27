@@ -476,22 +476,48 @@ def runcompanyWarningStations():
 
     # In[39]:
 
-    # 技改站点编号已确认，共五个站。
-    # 技改前后站点编号发生变化，且当前状态已经不是投运状态了，故需特殊处理
-    # 其中：
-    # （1）技改后未投运：这个站编号暂时不放进去
-    # 300003013200105 四川省西昌市攀钢坤牛西钢钒充电站
-    # （2）合并两个：
-    # 300003013200011 四川省成都市成华区麻石桥充电站
-    # 300003013200099 四川省成都市成华区麻石桥充电站二期
+    # 技改映射表只提供技改前后站点编号的对应关系。
+    # 站点名称、状态、投运时间和业务数据仍使用原有查询结果。
+    tech_upgrade_mapping = SQL("""
+    SELECT old_code, new_code
+    FROM dp_station_tech_upgrade_mapping
+    ORDER BY id
+    """)
+    if tech_upgrade_mapping.empty:
+        raise ValueError("dp_station_tech_upgrade_mapping 没有技改站点映射记录")
 
-    # 对应关系
+    required_mapping_columns = ['old_code', 'new_code']
+    invalid_mapping = (
+        tech_upgrade_mapping[required_mapping_columns].isna().any(axis=1)
+        | tech_upgrade_mapping[required_mapping_columns]
+        .astype(str)
+        .apply(lambda column: column.str.strip().eq(''))
+        .any(axis=1)
+    )
+    if invalid_mapping.any():
+        raise ValueError(
+            "技改站点映射存在空编号: "
+            + repr(
+                tech_upgrade_mapping.loc[
+                    invalid_mapping, required_mapping_columns
+                ].to_dict('records')
+            )
+        )
 
-    #   "300003000100002472",
-    #   "300003000100002473",
-    #   "300003013200011",
-    #   "300003013200099",
-    #   "300003013200108"
+    tech_upgrade_mapping[required_mapping_columns] = (
+        tech_upgrade_mapping[required_mapping_columns]
+        .astype(str)
+        .apply(lambda column: column.str.strip())
+    )
+    old_station_codes = tech_upgrade_mapping['old_code'].drop_duplicates().tolist()
+    station_code_mapping = dict(
+        tech_upgrade_mapping[['old_code', 'new_code']].itertuples(index=False, name=None)
+    )
+    old_codes_by_new_code = (
+        tech_upgrade_mapping.groupby('new_code', sort=False)['old_code']
+        .agg(list)
+        .to_dict()
+    )
 
     # ## 站点数据筛选
 
@@ -507,11 +533,7 @@ def runcompanyWarningStations():
 
     # 金额指标筛选四川电动旗下投运、退运、停运状态的全量站点数据+技改站
     data1 = df1[(df1['operation_status'].isin(amount_station_statuses) |
-                 (df1['station_no'].isin(["300003000100002472",
-                                          "300003000100002473",
-                                          "300003013200011",
-                                          "300003013200099",
-                                          "300003013200108"]))) &
+                 (df1['station_no'].isin(old_station_codes))) &
                 (df1['investment_amount'] != 0)]
     print(data1.shape)
     data1.head(1)
@@ -615,20 +637,13 @@ def runcompanyWarningStations():
 
     # In[54]:
 
-    # 将技改的5个站点编号对应修改为技改后的站点编号
+    # 将技改前站点编号对应修改为技改后的站点编号
     data9 = data8.copy()
-    mapping = {
-        "300003013200108": "300003000100019488",
-        "300003000100002472": "300003000100017539",
-        "300003000100002473": "300003000100017538",
-        "300003013200011": "300003000100019487",
-        "300003013200099": "300003000100019487"
-    }
 
     # 定义需要替换的目标列
     target_cols = data9.columns[[0, 1, 2, 3, 4, 6, 7, 8, 9]]
 
-    for old_val, new_val in mapping.items():
+    for old_val, new_val in station_code_mapping.items():
         # 提取目标行的目标列数据
         target_values = data9.loc[data9['station_no'] == new_val, target_cols]
         # 替换对应行的目标列
@@ -638,10 +653,6 @@ def runcompanyWarningStations():
     # In[55]:
 
     data9.shape
-
-    # In[56]:
-
-    data9[data9['station_no'] == '300003000100019488']
 
     # # 站点回本进度详情
 
@@ -696,17 +707,9 @@ def runcompanyWarningStations():
 
     no_list = data10[data10['静态资金回本进度'] >= 100]['station_no'].to_list()
     for i in no_list:
-        # 技改数据特殊处理
-        if i == '300003000100019488':
-            x1 = df1[df1['station_no'].isin(['300003000100019488', '300003013200108'])]
-        elif i == '300003000100017539':
-            x1 = df1[df1['station_no'].isin(['300003000100017539', '300003000100002472'])]
-        elif i == '300003000100017538':
-            x1 = df1[df1['station_no'].isin(['300003000100017538', '300003000100002473'])]
-        elif i == '300003000100019487':
-            x1 = df1[df1['station_no'].isin(['300003000100019487', '300003013200011', '300003013200099'])]
-        else:
-            x1 = df1[df1['station_no'] == i]
+        # 技改站同时取新站和映射表中的全部旧站，其他站只取自身。
+        related_station_codes = [i] + old_codes_by_new_code.get(i, [])
+        x1 = df1[df1['station_no'].isin(related_station_codes)]
         # 生成站点从投运开始的年月码表
         x1 = x1[['station_no', 'commissioning_time']]
         end_year = int(M[:4])

@@ -99,6 +99,68 @@ def runtechUpgradeStation():
         return days_in_month
 
     Data = generate_months(M, 11)
+
+    # 技改站点范围由映射表维护，避免在代码中固化站点编号和名称。
+    mapping_sql = """
+    SELECT
+        m.old_code,
+        m.new_code,
+        old_cs.station_no AS old_station_no,
+        old_cs.station_name AS old_station_db_name,
+        new_cs.station_no AS new_station_no,
+        new_cs.station_name AS new_station_db_name
+    FROM dp_station_tech_upgrade_mapping m
+    LEFT JOIN charging_station old_cs ON BINARY old_cs.station_no = BINARY m.old_code
+    LEFT JOIN charging_station new_cs ON BINARY new_cs.station_no = BINARY m.new_code
+    ORDER BY m.id
+    """
+    DF_mapping = SQL(mapping_sql)
+    if DF_mapping.empty:
+        raise ValueError("dp_station_tech_upgrade_mapping 没有技改站点映射记录")
+
+    # 映射表只负责提供前后站点编号；站点名称和其他业务属性以 charging_station 为准。
+    required_mapping_columns = ['old_code', 'new_code']
+    invalid_mapping = (
+        DF_mapping[required_mapping_columns].isna().any(axis=1)
+        | DF_mapping[required_mapping_columns].astype(str).apply(lambda col: col.str.strip().eq('')).any(axis=1)
+    )
+    if invalid_mapping.any():
+        raise ValueError(
+            "技改映射编号存在空值: " +
+            DF_mapping.loc[invalid_mapping, required_mapping_columns].to_dict('records').__repr__()
+        )
+
+    missing_old = DF_mapping.loc[DF_mapping['old_station_no'].isna(), 'old_code'].tolist()
+    missing_new = DF_mapping.loc[DF_mapping['new_station_no'].isna(), 'new_code'].tolist()
+    missing_old_name = DF_mapping.loc[
+        DF_mapping['old_station_db_name'].isna()
+        | DF_mapping['old_station_db_name'].astype(str).str.strip().eq(''),
+        'old_code'
+    ].tolist()
+    missing_new_name = DF_mapping.loc[
+        DF_mapping['new_station_db_name'].isna()
+        | DF_mapping['new_station_db_name'].astype(str).str.strip().eq(''),
+        'new_code'
+    ].tolist()
+    if missing_old or missing_new or missing_old_name or missing_new_name:
+        raise ValueError(
+            "charging_station 缺少技改站点或站点名称: "
+            f"old_code={missing_old}, new_code={missing_new}, "
+            f"old_name_code={missing_old_name}, new_name_code={missing_new_name}"
+        )
+
+    reform_pairs = list(
+        DF_mapping[['old_station_db_name', 'new_station_db_name']]
+        .itertuples(index=False, name=None)
+    )
+    reform_per_stations = DF_mapping['old_code'].drop_duplicates().tolist()
+    reform_post_stations = DF_mapping['new_code'].drop_duplicates().tolist()
+    charging_station_nos = list(dict.fromkeys(reform_per_stations + reform_post_stations))
+    station_no_sql = ', '.join("'{}'".format(str(code).replace("'", "''")) for code in charging_station_nos)
+    station_name_by_code = dict(zip(DF_mapping['old_code'], DF_mapping['old_station_db_name']))
+    station_name_by_code.update(dict(zip(DF_mapping['new_code'], DF_mapping['new_station_db_name'])))
+    site_name_filters = DF_mapping['old_station_db_name'].drop_duplicates().tolist()
+
     # ## sql
 
     # ### 基本信息
@@ -124,26 +186,16 @@ def runtechUpgradeStation():
 
     # In[12]:
 
-    sql = """
-    SELECT * 
+    sql = f"""
+    SELECT *
     FROM charging_station
-    WHERE station_no IN (
-        "300003000100002472",
-        "300003000100002473",
-        "300003000100017538",
-        "300003000100017539",
-        "300003000100019487",
-        "300003000100019488",
-        "300003013200011",
-        "300003013200099",
-        "300003013200108"
-    )
+    WHERE station_no IN ({station_no_sql})
     """
     DF_charging_station = SQL(sql)
 
     # In[13]:
 
-    sql = """
+    sql = f"""
     SELECT
       station_no,
       SUM(CAST(point_count AS UNSIGNED)) AS total_guns,
@@ -177,18 +229,7 @@ def runtechUpgradeStation():
 
     FROM
       charging_station_point
-    WHERE
-      station_no IN (
-        "300003000100002472",
-        "300003000100002473",
-        "300003000100017538",
-        "300003000100017539",
-        "300003000100019487",
-        "300003000100019488",
-        "300003013200011",
-        "300003013200099",
-        "300003013200108"
-    )
+      WHERE station_no IN ({station_no_sql})
     GROUP BY
       station_no;
     """
@@ -200,7 +241,7 @@ def runtechUpgradeStation():
 
     # In[15]:
 
-    sql = """
+    sql = f"""
     select * from 
     (SELECT 
     cs.*
@@ -210,17 +251,7 @@ def runtechUpgradeStation():
     where 
     rm.merchant_name = '国网电动汽车服务（四川）有限公司'
     and  cs.operation_status in ('投运','退运')
-    and cs.station_no IN (
-        "300003000100002472",
-        "300003000100002473",
-        "300003000100017538",
-        "300003000100017539",
-        "300003000100019487",
-        "300003000100019488",
-        "300003013200011",
-        "300003013200099",
-        "300003013200108"
-    )) a
+    and cs.station_no IN ({station_no_sql})) a
     left join 
     (select * from station_cba_org_data ) b
     on a.station_no =b.station_no
@@ -243,7 +274,7 @@ def runtechUpgradeStation():
 
     # In[17]:
 
-    sql = """
+    sql = f"""
     SELECT
       station_code,
       station_name,
@@ -255,29 +286,23 @@ def runtechUpgradeStation():
     FROM
       dp_operation_duration
     WHERE
-      station_code IN (
-        '300003000100002472',
-        '300003000100002473',
-        '300003000100017538',
-        '300003000100017539',
-        '300003000100019487',
-        '300003000100019488',
-        '300003013200011',
-        '300003013200099',
-        '300003013200108'
-      )
+      station_code IN ({station_no_sql})
     group by
     station_code,
       station_name,
       stat_time
     """
     DF_operation = SQL(sql)
+    DF_operation['station_name'] = (
+        DF_operation['station_code'].map(station_name_by_code)
+        .fillna(DF_operation['station_name'])
+    )
 
     # ### 一次成功率
 
     # In[18]:
 
-    sql = '''
+    sql = f'''
     SELECT
       cs.station_no,
       cs.station_name,
@@ -291,17 +316,7 @@ def runtechUpgradeStation():
     INNER JOIN charging_station cs
       ON dsr.station_code = cs.station_no
     WHERE
-      station_no IN (
-        '300003000100002472',
-        '300003000100002473',
-        '300003000100017538',
-        '300003000100017539',
-        '300003000100019487',
-        '300003000100019488',
-        '300003013200011',
-        '300003013200099',
-        '300003013200108'
-      )
+      station_no IN ({station_no_sql})
     GROUP BY
       cs.station_category,
       cs.station_no,
@@ -309,6 +324,10 @@ def runtechUpgradeStation():
       dsr.stat_time
     '''
     DF_success = SQL(sql)
+    DF_success['station_name'] = (
+        DF_success['station_no'].map(station_name_by_code)
+        .fillna(DF_success['station_name'])
+    )
 
     # In[19]:
 
@@ -318,7 +337,7 @@ def runtechUpgradeStation():
 
     # In[20]:
 
-    sql = """
+    sql = f"""
     SELECT 
       rm.merchant_name,
       cs.*,
@@ -332,6 +351,7 @@ def runtechUpgradeStation():
     WHERE 
       rm.merchant_name = '国网电动汽车服务（四川）有限公司'
       and cs.operation_status in ('投运','退运')
+      and cs.station_no IN ({station_no_sql})
     """
     DF_cba_pue = SQL(sql)
 
@@ -377,36 +397,16 @@ def runtechUpgradeStation():
     logger.info("开始执行sql查询")
     start_time = datetime.now()  # ⬅ 开始计时
 
-    # 1. 准备查询参数
-    charging_station_nos = [
-        "300003000100002472",
-        "300003000100002473",
-        "300003000100017538",
-        "300003000100017539",
-        "300003000100019487",
-        "300003000100019488",
-        "300003013200011",
-        "300003013200099",
-        "300003013200108"
-    ]
-
-    # 2. 查询小表
-    sql_cs = f"""
-        SELECT station_no, station_name
-        FROM charging_station
-        WHERE station_no IN ({', '.join([f"'{s}'" for s in charging_station_nos])})
-    """
-    df_cs = SQL(sql_cs)
-
+    # 2. 查询站点月度财务电量
     sql_cba = f"""
         SELECT station_no, cba_month, rec_cost_elec_cons
         FROM station_cba_org_data
-        WHERE station_no IN ({', '.join([f"'{s}'" for s in charging_station_nos])})
+        WHERE station_no IN ({station_no_sql})
           AND cba_month BETWEEN '{min(begin1)[:7].replace('-', '')}' AND '{max(end1)[:7].replace('-', '')}'
     """
     df_cba = SQL(sql_cba)
 
-    station_map = df_cs.set_index('station_no')['station_name'].to_dict()
+    station_map = station_name_by_code
     cba_map = df_cba.set_index(['station_no', 'cba_month'])['rec_cost_elec_cons'].to_dict()
 
     # 3. 循环分批查询主表
@@ -423,7 +423,7 @@ def runtechUpgradeStation():
                 fp.charging_start_time,
                 fp.charging_end_time
             FROM fin_plat_data_order fp
-            WHERE fp.charging_station_no IN ({', '.join([f"'{s}'" for s in charging_station_nos])})
+            WHERE fp.charging_station_no IN ({station_no_sql})
               AND fp.order_create_time BETWEEN '{begin1[i]}' AND '{end1[i]}'
         """
         df_d = SQL(sql_main)
@@ -516,12 +516,7 @@ def runtechUpgradeStation():
 
     # In[31]:
 
-    after_stations_list = [
-        "四川省成都市彭州市濛阳镇供电所公共充电站",
-        "沪蓉高速遂宁服务区公共充电站（成都方向）",
-        "沪蓉高速遂宁服务区公共充电站（上海方向）",
-        "四川省成都市成华区麻石桥城市公共充电站"
-    ]
+    after_stations_list = DF_mapping['new_station_db_name'].drop_duplicates().tolist()
 
     # In[32]:
 
@@ -558,14 +553,6 @@ def runtechUpgradeStation():
     DF_ab1 = DF_ab1[['station_name', 'total_power', 'ac_count', 'dc_count', 'avg_ac_power', 'avg_dc_power', 'manufacturers', 'total_guns']]
 
     # In[37]:
-
-    reform_pairs = [
-        ('四川省成都市彭州市濛阳镇供电所电动汽车充电站', '四川省成都市彭州市濛阳镇供电所公共充电站'),
-        ('沪蓉高速遂宁服务区公共充电站成都方向', '沪蓉高速遂宁服务区公共充电站（成都方向）'),
-        ('沪蓉高速遂宁服务区公共充电站上海方向', '沪蓉高速遂宁服务区公共充电站（上海方向）'),
-        ('四川省成都市成华区麻石桥充电站', '四川省成都市成华区麻石桥城市公共充电站'),
-        ('四川省成都市成华区麻石桥充电站二期', '四川省成都市成华区麻石桥城市公共充电站'),
-    ]
 
     # In[38]:
 
@@ -681,52 +668,7 @@ def runtechUpgradeStation():
     #     right_on='station_no'  # charging_station 中的字段
     # )
 
-    # In[54]:
-
-    # downtime_map = {
-    #     '四川省成都市彭州市濛阳镇供电所电动汽车充电站': '202404',
-    #     '四川省成都市成华区麻石桥充电站': '202404',
-    #     '四川省成都市成华区麻石桥充电站二期': '202404',
-    #     '沪蓉高速遂宁服务区公共充电站成都方向': '202312',
-    #     '沪蓉高速遂宁服务区公共充电站上海方向': '202312',
-    # }
-
-    # In[55]:
-
-    # DF_operation_rate['downtime'] = DF_operation_rate['station_name'].map(downtime_map)
-    # # 提取前6位字符作为 month
-    # DF_operation_rate['month'] = DF_operation_rate['time'].str[:6]
-
     # In[56]:
-
-    reform_post_stations = [
-        "300003000100017538",
-        "300003000100017539",
-        "300003000100019487",
-        "300003000100019488"
-    ]
-    # [
-    #     '四川省成都市彭州市濛阳镇供电所公共充电站',
-    #     '沪蓉高速遂宁服务区公共充电站（成都方向）',
-    #     '沪蓉高速遂宁服务区公共充电站（上海方向）',
-    #     '四川省成都市成华区麻石桥城市公共充电站',
-    # ]
-
-    #
-    reform_per_stations = [
-        "300003000100002472",
-        "300003000100002473",
-        "300003013200011",
-        "300003013200099",
-        "300003013200108"
-    ]
-    # [
-    #     '四川省成都市彭州市濛阳镇供电所电动汽车充电站',
-    #     '沪蓉高速遂宁服务区公共充电站成都方向',
-    #     '沪蓉高速遂宁服务区公共充电站上海方向',
-    #     '四川省成都市成华区麻石桥充电站',
-    #     '四川省成都市成华区麻石桥充电站二期',
-    # ]
 
     # In[57]:
     # 提取 Data['month'] 列为一个列表
@@ -1279,23 +1221,12 @@ def runtechUpgradeStation():
 
     # In[106]:
 
-    # sql = """
-    # SELECT
-    # cs.station_name,cs.station_no,cs.investment_amount,cs.commissioning_time,cs.station_category
-    # FROM
-    # charging_station cs
-    # LEFT JOIN rec_merchant rm ON cs.property_owner_merhant_id = rm.merchant_id
-    # where
-    # cs.station_no IN ( "300003000100002472", "300003000100002473", "300003000100017538", "300003000100017539", "300003000100019487", "300003000100019488", "300003013200011", "300003013200099", "300003013200108" )
-
-    # """
-    # DF_station = SQL(sql)
-
     this_year = f"{M[:4]}年"
 
     sql = f"""
     select year,station_no,IFNULL(total_subsidy,0) as total_subsidy from dp_subsidy_NEW
     where year = '{this_year}'
+    and station_no IN ({station_no_sql})
     """
     DF_subsidy = SQL(sql)
 
@@ -1327,17 +1258,7 @@ def runtechUpgradeStation():
     FROM (
       SELECT cs.*
       FROM charging_station cs
-      WHERE cs.station_no IN (
-        "300003000100002472",
-        "300003000100002473",
-        "300003000100017538",
-        "300003000100017539",
-        "300003000100019487",
-        "300003000100019488",
-        "300003013200011",
-        "300003013200099",
-        "300003013200108"
-      )
+      WHERE cs.station_no IN ({station_no_sql})
     ) a
     LEFT JOIN (
       SELECT *
@@ -1348,6 +1269,10 @@ def runtechUpgradeStation():
     GROUP BY a.station_name, b.station_no, b.cba_month;
     """
     DF_cost_revenue = SQL(sql)
+    DF_cost_revenue['station_name'] = (
+        DF_cost_revenue['station_no'].map(station_name_by_code)
+        .fillna(DF_cost_revenue['station_name'])
+    )
 
     sql = """
     SELECT
@@ -1475,9 +1400,6 @@ def runtechUpgradeStation():
     DF_watt
 
     # In[113]:
-
-    DF_watt.loc[(DF_watt['station_no'] == "300003000100017538") & (DF_watt['cba_month'] == M),
-                ['station_no', 'station_name', 'income', 'cba_month', 'total_power', 'capacity_watt', 'benefit_per_watt']]
 
     # In[114]:
 
@@ -1757,13 +1679,7 @@ def runtechUpgradeStation():
 
     # 构建最终结构（直接扁平化 tableData）
     result = {
-        "siteNameFilters": [
-            "四川省成都市彭州市濛阳镇供电所电动汽车充电站",
-            "四川省成都市成华区麻石桥充电站",
-            "四川省成都市成华区麻石桥充电站二期",
-            "沪蓉高速遂宁服务区公共充电站上海方向",
-            "沪蓉高速遂宁服务区公共充电站成都方向"
-        ],
+        "siteNameFilters": site_name_filters,
         "technologicalTransformationFilters": ["迁址", "扩容", "升级"],
         "siteTypeFilters": ["城市公共", "高速公共", "重卡专用"],
         "tableData": station_data
@@ -2386,13 +2302,3 @@ def runtechUpgradeStation():
     # In[ ]:
 
     # In[ ]:
-
-
-
-
-
-
-
-
-
-

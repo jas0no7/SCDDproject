@@ -541,22 +541,31 @@ def runkeyStationInternalCompetition():
 
     # In[266]:
 
-    # 技改站点编号已确认，共五个站。
-    # 技改前后站点编号发生变化，且当前状态已经不是投运状态了，故需特殊处理
-    # 其中：
-    # （1）技改后未投运：这个站编号暂时不放进去
-    # 300003013200105 四川省西昌市攀钢坤牛西钢钒充电站
-    # （2）合并两个：
-    # 300003013200011 四川省成都市成华区麻石桥充电站
-    # 300003013200099 四川省成都市成华区麻石桥充电站二期
+    # 技改前后站点编号由映射表维护。映射表只提供编号关系，站点名称、
+    # 状态、投资、补贴及运营等业务数据仍全部来自原有查询。
+    tech_upgrade_mapping = SQL("""
+    SELECT old_code, new_code
+    FROM dp_station_tech_upgrade_mapping
+    ORDER BY id
+    """)
+    if tech_upgrade_mapping.empty:
+        raise ValueError("dp_station_tech_upgrade_mapping 没有技改站点映射记录")
 
-    # 对应关系
-
-    #   "300003000100002472",
-    #   "300003000100002473",
-    #   "300003013200011",
-    #   "300003013200099",
-    #   "300003013200108"
+    mapping_columns = ['old_code', 'new_code']
+    invalid_mapping = (
+        tech_upgrade_mapping[mapping_columns].isna().any(axis=1)
+        | tech_upgrade_mapping[mapping_columns].astype(str)
+        .apply(lambda column: column.str.strip().eq('')).any(axis=1)
+    )
+    if invalid_mapping.any():
+        raise ValueError(
+            "技改映射编号存在空值: "
+            + repr(tech_upgrade_mapping.loc[invalid_mapping, mapping_columns].to_dict('records'))
+        )
+    mapping = dict(zip(
+        tech_upgrade_mapping['old_code'].astype(str).str.strip(),
+        tech_upgrade_mapping['new_code'].astype(str).str.strip()
+    ))
 
     # ### 站点数据筛选
 
@@ -670,14 +679,6 @@ def runkeyStationInternalCompetition():
 
     # 将技改的5个站点编号对应修改为技改后的站点编号
     data9 = data8.copy()
-    mapping = {
-        "300003013200108": "300003000100019488",
-        "300003000100002472": "300003000100017539",
-        "300003000100002473": "300003000100017538",
-        "300003013200011": "300003000100019487",
-        "300003013200099": "300003000100019487"
-    }
-
     # 定义需要替换的目标列
     target_cols = data9.columns[[0, 1, 2, 3, 4, 6, 7, 8, 9]]
 
@@ -694,7 +695,7 @@ def runkeyStationInternalCompetition():
 
     # In[282]:
 
-    data9[data9['station_no'] == '300003000100019488']
+    data9[data9['station_no'].isin(mapping.values())]
 
     # ### 站点回本进度详情
 
@@ -931,7 +932,7 @@ def runkeyStationInternalCompetition():
     # In[297]:
 
     # 定义目标station_no列表（去重）
-    target_stations = ["300003000100019488", "300003000100017539", "300003000100017538", "300003000100019487"]
+    target_stations = list(mapping.values())
 
     # 注意：多个条件用&连接，每个条件需用()包裹
     mask = (income1['station_no'].isin(target_stations)) & (income1['cba_month'] == M)
@@ -1115,13 +1116,6 @@ def runkeyStationInternalCompetition():
 
     # 第七步：处理技改站点
     balance3 = balance2.copy()
-    mapping = {
-        "300003013200108": "300003000100019488",
-        "300003000100002472": "300003000100017539",
-        "300003000100002473": "300003000100017538",
-        "300003013200011": "300003000100019487",
-        "300003013200099": "300003000100019487"
-    }
 
     # 定义需要替换的目标列（除了investment_amount全都替换）
     target_cols = ['station_no', 'year', 'total_subsidy', 'except_investment_amount', '今年之前的累计投运月份']
@@ -1614,22 +1608,8 @@ def runkeyStationInternalCompetition():
 
     # In[315]:
 
-    # 技改站点编号已确认，共五个站。
-    # 技改前后站点编号发生变化，且当前状态已经不是投运状态了，故需特殊处理
-    # 其中：
-    # （1）技改后未投运：这个站编号暂时不放进去
-    # 300003013200105 四川省西昌市攀钢坤牛西钢钒充电站
-    # （2）合并两个：
-    # 300003013200011 四川省成都市成华区麻石桥充电站
-    # 300003013200099 四川省成都市成华区麻石桥充电站二期
-
-    # 对应关系
-
-    #   "300003000100002472",
-    #   "300003000100002473",
-    #   "300003013200011",
-    #   "300003013200099",
-    #   "300003013200108"
+    # 技改站点已在前面的累计回本逻辑中读取映射表并完成编号归并。
+    # 本段继续使用归并后的 data10，不重新读取或固化技改编号。
 
     # In[316]:
 

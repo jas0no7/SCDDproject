@@ -383,22 +383,50 @@ def runtechUpgradePaybackForecast():
     # In[37]:
 
 
-    # 技改站点编号已确认，共五个站。
-    # 技改前后站点编号发生变化，且当前状态已经不是投运状态了，故需特殊处理
-    # 其中：
-    # （1）技改后未投运：这个站编号暂时不放进去
-    # 300003013200105 四川省西昌市攀钢坤牛西钢钒充电站
-    # （2）合并两个：
-    # 300003013200011 四川省成都市成华区麻石桥充电站
-    # 300003013200099 四川省成都市成华区麻石桥充电站二期
+    # 映射表只提供技改前后的编号和名称关系；业务数据仍全部来自原始查询。
+    tech_upgrade_mapping = SQL("""
+    SELECT old_code, old_name, new_code, new_name
+    FROM dp_station_tech_upgrade_mapping
+    ORDER BY id
+    """)
+    if tech_upgrade_mapping.empty:
+        raise ValueError("dp_station_tech_upgrade_mapping 没有技改站点映射记录")
 
-    # 对应关系
+    mapping_columns = ['old_code', 'old_name', 'new_code', 'new_name']
+    if tech_upgrade_mapping[mapping_columns].isna().any().any():
+        raise ValueError("dp_station_tech_upgrade_mapping 存在空的映射字段")
+    tech_upgrade_mapping[mapping_columns] = tech_upgrade_mapping[mapping_columns].astype(str).apply(
+        lambda column: column.str.strip()
+    )
+    if (tech_upgrade_mapping[mapping_columns] == '').any().any():
+        raise ValueError("dp_station_tech_upgrade_mapping 存在空的映射字段")
 
-    #   "300003000100002472",
-    #   "300003000100002473",
-    #   "300003013200011",
-    #   "300003013200099",
-    #   "300003013200108"
+    old_station_codes = tech_upgrade_mapping['old_code'].drop_duplicates().tolist()
+
+    def station_codes_by_old_name(old_name):
+        rows = tech_upgrade_mapping[tech_upgrade_mapping['old_name'] == old_name]
+        if len(rows) != 1:
+            raise ValueError(f"技改映射表中的技改前站点名称不唯一或不存在: {old_name}")
+        row = rows.iloc[0]
+        return row['old_code'], row['new_code']
+
+    pengzhou_old_code, pengzhou_new_code = station_codes_by_old_name(
+        '四川省成都市彭州市濛阳镇供电所电动汽车充电站'
+    )
+    suining_chengdu_old_code, suining_chengdu_new_code = station_codes_by_old_name(
+        '沪蓉高速遂宁服务区公共充电站成都方向'
+    )
+    suining_shanghai_old_code, suining_shanghai_new_code = station_codes_by_old_name(
+        '沪蓉高速遂宁服务区公共充电站上海方向'
+    )
+    mashiqiao_phase1_old_code, mashiqiao_new_code = station_codes_by_old_name(
+        '四川省成都市成华区麻石桥充电站'
+    )
+    mashiqiao_phase2_old_code, mashiqiao_phase2_new_code = station_codes_by_old_name(
+        '四川省成都市成华区麻石桥充电站二期'
+    )
+    if mashiqiao_new_code != mashiqiao_phase2_new_code:
+        raise ValueError("麻石桥一期、二期没有映射到同一个技改后站点")
 
 
     # ### 站点数据筛选
@@ -413,11 +441,7 @@ def runtechUpgradePaybackForecast():
 
     # 筛选当前四川电动旗下投运状态的全量站点数据+技改站
     data1 = df1[((df1['operation_status'] == '投运') |
-                 (df1['station_no'].isin(["300003000100002472",
-                                          "300003000100002473",
-                                          "300003013200011",
-                                          "300003013200099",
-                                          "300003013200108"]))) &
+                 (df1['station_no'].isin(old_station_codes))) &
                 (df1['investment_amount'] != 0)]
     print(data1.shape)
     data1.head(1)
@@ -526,36 +550,10 @@ def runtechUpgradePaybackForecast():
     # In[50]:
 
 
-    # #将技改的5个站点编号对应修改为技改后的站点编号
-    # data9 = data8.copy()
-    # # mapping = {
-    # #     "300003013200108": "300003000100019488",
-    # #     "300003000100002472": "300003000100017539",
-    # #     "300003000100002473": "300003000100017538",
-    # #     "300003013200011": "300003000100019487",
-    # #     "300003013200099": "300003000100019487"
-    # # }
-
-    # # 定义需要替换的目标列
-    # target_cols = data9.columns[[0,1,2,3,4,6,7,8]]
-
-    # for old_val, new_val in mapping.items():
-    #     # 提取目标行的目标列数据
-    #     target_values = data9.loc[data9['station_no'] == new_val, target_cols]
-    #     # 替换对应行的目标列
-    #     if not target_values.empty:
-    #         data9.loc[data9['station_no'] == old_val, target_cols] = target_values.iloc[0].values
-
-
-    # In[51]:
-
-
     data9 = data8.copy()
 
     # In[52]:
 
-
-    data9[data9['station_no'] == '300003000100002472']
 
     # ### 站点回本进度详情
 
@@ -636,16 +634,6 @@ def runtechUpgradePaybackForecast():
     DF_Break_even = []
     no_list = data10['station_no'].to_list()
     for i in no_list:
-        # 技改数据特殊处理
-        #     if i == '300003000100019488':
-        #         x1 = df1[df1['station_no'].isin(['300003000100019488','300003013200108'])]
-        #     elif i == '300003000100017539':
-        #         x1 = df1[df1['station_no'].isin(['300003000100017539','300003000100002472'])]
-        #     elif i == '300003000100017538':
-        #         x1 = df1[df1['station_no'].isin(['300003000100017538','300003000100002473'])]
-        #     elif i == '300003000100019487':
-        #         x1 = df1[df1['station_no'].isin(['300003000100019487','300003013200011','300003013200099'])]
-        #     else:
         x1 = df1[df1['station_no'] == i]
         #     #生成站点从投运开始的年月码表
         x1 = x1[['station_no', 'commissioning_time']]
@@ -724,7 +712,7 @@ def runtechUpgradePaybackForecast():
     # In[ ]:
 
 
-    station1_jgq = DF_Break_even[DF_Break_even['station_no'] == "300003013200108"]
+    station1_jgq = DF_Break_even[DF_Break_even['station_no'] == pengzhou_old_code]
     station1_jgq = station1_jgq[station1_jgq['month'] <= '202403']
     cost_pre = station1_jgq.iloc[-6:]['cost'].mean()
     revenue_pre = station1_jgq.iloc[-6:]['revenue'].mean()
@@ -739,7 +727,7 @@ def runtechUpgradePaybackForecast():
     # In[ ]:
 
 
-    df1 = pd.DataFrame(columns=['station_no', '预计回本周期'], data=[['300003013200108', d3]])
+    df1 = pd.DataFrame(columns=['station_no', '预计回本周期'], data=[[pengzhou_old_code, d3]])
     df1
 
     # <!--  -->技改后
@@ -747,7 +735,7 @@ def runtechUpgradePaybackForecast():
     # In[ ]:
 
 
-    station1_jgh = DF_Break_even[DF_Break_even['station_no'] == '300003000100019488']
+    station1_jgh = DF_Break_even[DF_Break_even['station_no'] == pengzhou_new_code]
     cost_pre = station1_jgh.iloc[-6:-1]['月总支出'].mean() * 0.9
     revenue_pre = station1_jgh.iloc[-6:-1]['revenue'].mean()
     if station1_jgh.empty:
@@ -764,7 +752,7 @@ def runtechUpgradePaybackForecast():
     # In[ ]:
 
 
-    df2 = pd.DataFrame(columns=['station_no', '预计回本周期'], data=[['300003000100019488', d3]])
+    df2 = pd.DataFrame(columns=['station_no', '预计回本周期'], data=[[pengzhou_new_code, d3]])
     df2
 
     # #### 沪蓉高速遂宁服务区公共充电站成都方向
@@ -774,7 +762,7 @@ def runtechUpgradePaybackForecast():
     # In[93]:
 
 
-    station1_jgq = DF_Break_even[DF_Break_even['station_no'] == '300003000100002472']
+    station1_jgq = DF_Break_even[DF_Break_even['station_no'] == suining_chengdu_old_code]
     station1_jgq = station1_jgq[station1_jgq['month'] <= '202310']
     cost_pre = station1_jgq.iloc[-6:]['cost'].mean()
     
@@ -794,7 +782,7 @@ def runtechUpgradePaybackForecast():
     # In[94]:
 
 
-    df3 = pd.DataFrame(columns=['station_no', '预计回本周期'], data=[['300003000100002472', d3]])
+    df3 = pd.DataFrame(columns=['station_no', '预计回本周期'], data=[[suining_chengdu_old_code, d3]])
     df3
 
     # <!--  -->技改后
@@ -802,7 +790,7 @@ def runtechUpgradePaybackForecast():
     # In[95]:
 
 
-    station1_jgh = DF_Break_even[DF_Break_even['station_no'] == '300003000100017539']
+    station1_jgh = DF_Break_even[DF_Break_even['station_no'] == suining_chengdu_new_code]
     cost_pre = station1_jgh.iloc[-6:-1]['月总支出'].mean()
     revenue_pre = station1_jgh.iloc[-6:-1]['月总收入'].mean()
     COST2 = station1_jgh.iloc[-1]['当月累计支出(含初始投资)'] - station1_jgh.iloc[-1]['当月累计支出']
@@ -817,7 +805,7 @@ def runtechUpgradePaybackForecast():
     # In[96]:
 
 
-    df4 = pd.DataFrame(columns=['station_no', '预计回本周期'], data=[['300003000100017539', d3]])
+    df4 = pd.DataFrame(columns=['station_no', '预计回本周期'], data=[[suining_chengdu_new_code, d3]])
     df4
 
     # #### 沪蓉高速遂宁服务区公共充电站（上海方向)
@@ -827,7 +815,7 @@ def runtechUpgradePaybackForecast():
     # In[97]:
 
 
-    station1_jgq = DF_Break_even[DF_Break_even['station_no'] == '300003000100002473']
+    station1_jgq = DF_Break_even[DF_Break_even['station_no'] == suining_shanghai_old_code]
     station1_jgq = station1_jgq[station1_jgq['month'] <= '202310']
     cost_pre = station1_jgq.iloc[-6:]['cost'].mean() * 1.11
     revenue_pre = station1_jgq.iloc[-6:]['revenue'].mean()
@@ -842,7 +830,7 @@ def runtechUpgradePaybackForecast():
     # In[98]:
 
 
-    df5 = pd.DataFrame(columns=['station_no', '预计回本周期'], data=[['300003000100002473', d3]])
+    df5 = pd.DataFrame(columns=['station_no', '预计回本周期'], data=[[suining_shanghai_old_code, d3]])
     df5
 
     # <!--  -->技改后
@@ -850,7 +838,7 @@ def runtechUpgradePaybackForecast():
     # In[99]:
 
 
-    station1_jgh = DF_Break_even[DF_Break_even['station_no'] == '300003000100017538']
+    station1_jgh = DF_Break_even[DF_Break_even['station_no'] == suining_shanghai_new_code]
     cost_pre = station1_jgh.iloc[-6:-1]['月总支出'].mean()
     revenue_pre = station1_jgh.iloc[-6:-1]['月总收入'].mean()
     COST2 = station1_jgh.iloc[-1]['当月累计支出(含初始投资)'] - station1_jgh.iloc[-1]['当月累计支出']
@@ -864,7 +852,7 @@ def runtechUpgradePaybackForecast():
     # In[100]:
 
 
-    df6 = pd.DataFrame(columns=['station_no', '预计回本周期'], data=[['300003000100017538', d3]])
+    df6 = pd.DataFrame(columns=['station_no', '预计回本周期'], data=[[suining_shanghai_new_code, d3]])
     df6
 
     # #### 四川省成都市成华区麻石桥城市公共充电站
@@ -874,7 +862,7 @@ def runtechUpgradePaybackForecast():
     # In[101]:
 
 
-    station1_jgh = DF_Break_even[DF_Break_even['station_no'] == '300003013200011']
+    station1_jgh = DF_Break_even[DF_Break_even['station_no'] == mashiqiao_phase1_old_code]
     station1_jgq = station1_jgq[station1_jgq['month'] < '202312']
     cost_pre = station1_jgq.iloc[-6:]['cost'].mean()
     revenue_pre = station1_jgq.iloc[-6:]['revenue'].mean()
@@ -890,13 +878,13 @@ def runtechUpgradePaybackForecast():
     # In[102]:
 
 
-    df7_1 = pd.DataFrame(columns=['station_no', '预计回本周期'], data=[['300003013200011', d3]])
+    df7_1 = pd.DataFrame(columns=['station_no', '预计回本周期'], data=[[mashiqiao_phase1_old_code, d3]])
     df7_1
 
     # In[103]:
 
 
-    station1_jgh = DF_Break_even[DF_Break_even['station_no'] == '300003013200099']
+    station1_jgh = DF_Break_even[DF_Break_even['station_no'] == mashiqiao_phase2_old_code]
     station1_jgq = station1_jgq[station1_jgq['month'] < '202312']
     cost_pre = station1_jgq.iloc[-6:]['cost'].mean()
     revenue_pre = station1_jgq.iloc[-6:]['revenue'].mean()
@@ -912,7 +900,7 @@ def runtechUpgradePaybackForecast():
     # In[104]:
 
 
-    df7_2 = pd.DataFrame(columns=['station_no', '预计回本周期'], data=[['300003013200099', d3]])
+    df7_2 = pd.DataFrame(columns=['station_no', '预计回本周期'], data=[[mashiqiao_phase2_old_code, d3]])
     df7_2
 
     # <!--  -->技改后
@@ -920,7 +908,7 @@ def runtechUpgradePaybackForecast():
     # In[105]:
 
 
-    station1_jgh = DF_Break_even[DF_Break_even['station_no'] == '300003000100019487']
+    station1_jgh = DF_Break_even[DF_Break_even['station_no'] == mashiqiao_new_code]
     cost_pre = station1_jgh.iloc[-6:-1]['月总支出'].mean() * 0.001
     revenue_pre = station1_jgh.iloc[-6:-1]['月总收入'].mean()
     COST2 = station1_jgh.iloc[-1]['当月累计支出(含初始投资)'] - station1_jgh.iloc[-1]['当月累计支出']
@@ -934,7 +922,7 @@ def runtechUpgradePaybackForecast():
     # In[106]:
 
 
-    df8 = pd.DataFrame(columns=['station_no', '预计回本周期'], data=[['300003000100019487', d3]])
+    df8 = pd.DataFrame(columns=['station_no', '预计回本周期'], data=[[mashiqiao_new_code, d3]])
     df8
 
     # # 预计回本周期
@@ -958,20 +946,17 @@ def runtechUpgradePaybackForecast():
     # In[109]:
 
 
-    sql = """
-    SELECT * 
-    FROM charging_station
-    WHERE station_no IN (
-        "300003000100002472",
-        "300003000100002473",
-        "300003000100017538",
-        "300003000100017539",
-        "300003000100019487",
-        "300003000100019488",
-        "300003013200011",
-        "300003013200099",
-        "300003013200108"
+    mapped_station_codes = pd.concat([
+        tech_upgrade_mapping['old_code'],
+        tech_upgrade_mapping['new_code']
+    ]).drop_duplicates().tolist()
+    station_codes_sql = ', '.join(
+        "'{}'".format(code.replace("'", "''")) for code in mapped_station_codes
     )
+    sql = f"""
+    SELECT *
+    FROM charging_station
+    WHERE station_no IN ({station_codes_sql})
     """
     DF_charging_station = SQL(sql)
 
@@ -992,40 +977,38 @@ def runtechUpgradePaybackForecast():
     # In[112]:
 
 
-    reform_pairs = [
-        ('四川省成都市彭州市濛阳镇供电所电动汽车充电站', '四川省成都市彭州市濛阳镇供电所公共充电站'),
-        ('沪蓉高速遂宁服务区公共充电站成都方向', '沪蓉高速遂宁服务区公共充电站（成都方向）'),
-        ('沪蓉高速遂宁服务区公共充电站上海方向', '沪蓉高速遂宁服务区公共充电站（上海方向）'),
-        ('四川省成都市成华区麻石桥充电站', '四川省成都市成华区麻石桥城市公共充电站'),
-        ('四川省成都市成华区麻石桥充电站二期', '四川省成都市成华区麻石桥城市公共充电站'),
-    ]
-
     # In[113]:
 
 
-    records = []
+    pre_recovery_period = df_recovery_period.rename(columns={
+        'station_no': 'old_code',
+        'station_name': 'pre_station_name',
+        '预计回本周期': '预计回本期限'
+    })[['old_code', 'pre_station_name', '预计回本期限']]
+    post_recovery_period = df_recovery_period.rename(columns={
+        'station_no': 'new_code',
+        'station_name': 'post_station_name'
+    })[['new_code', 'post_station_name', '预计回本周期']].drop_duplicates(subset=['new_code'])
 
-    for old_name, new_name in reform_pairs:
-        # 找出技改前后的行（各只取第一条记录）
-        old_rows = df_recovery_period[df_recovery_period['station_name'] == old_name]
-        new_rows = df_recovery_period[df_recovery_period['station_name'] == new_name]
-
-        old_row = old_rows.iloc[0] if not old_rows.empty else None
-        new_row = new_rows.iloc[0] if not new_rows.empty else None
-
-        # 如果两边都能找到，组合结果
-        if old_row is not None and new_row is not None:
-            combined = {
-                'station_no': old_row['station_no'],  # 保留编号
-                'pre_station_name': old_name,
-                '预计回本期限': old_row['预计回本周期'],
-
-                'post_station_name': new_name,
-                '预计回本周期': new_row['预计回本周期'],
-            }
-            records.append(combined)
-
-    df_recovery_period2 = pd.DataFrame(records)
+    df_recovery_period2 = tech_upgrade_mapping.merge(
+        pre_recovery_period,
+        on='old_code',
+        how='left',
+        validate='one_to_one'
+    ).merge(
+        post_recovery_period,
+        on='new_code',
+        how='left',
+        validate='many_to_one'
+    )
+    missing_period = df_recovery_period2[
+        df_recovery_period2[['预计回本期限', '预计回本周期']].isna().any(axis=1)
+    ]
+    if not missing_period.empty:
+        raise ValueError(
+            "技改映射对应的回本周期数据缺失: "
+            + repr(missing_period[['old_code', 'new_code']].to_dict('records'))
+        )
 
     # In[114]:
 
@@ -1038,7 +1021,7 @@ def runtechUpgradePaybackForecast():
         diff = round(pre_value - post_value, 2)  # 计算提前年数
 
         record = {
-            "siteNum": row['station_no'],  # 从1开始
+            "siteNum": row['old_code'],
             "statistics": [
                 {"title": "技改前", "name": "预计回本期限", "value": pre_value, "unit": "年"},
                 {"title": "技改后", "name": "预计回本周期", "value": post_value, "unit": "年"},
@@ -1079,7 +1062,3 @@ def runtechUpgradePaybackForecast():
 
 
     # In[ ]:
-
-
-
-
