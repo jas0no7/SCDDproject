@@ -96,8 +96,8 @@ def runtypeMonitoringOverview():
     # In[10]:
 
     target_categories = ['城市公共', '高速公共', '重卡专用', '公交专用', '小区有序', '其他专用','V2G']
-    DF_SCDD = DF_SCDD[DF_SCDD['station_category'].isin(target_categories)]
     DF_SCDD.loc[DF_SCDD['station_category'] == '高速', 'station_category'] = '高速公共'
+    DF_SCDD = DF_SCDD[DF_SCDD['station_category'].isin(target_categories)]
 
     # 投资数据需同时包含投运、退运和停运站点，不能复用普通页面的站点口径。
     sql = """
@@ -349,7 +349,8 @@ def runtypeMonitoringOverview():
 
     sql = """
     SELECT 
-    cs.station_name,cs.station_no,cs.investment_amount,cs.commissioning_time,cs.station_category
+    cs.station_name,cs.station_no,cs.investment_amount,cs.commissioning_time,cs.station_category,
+    cs.operation_status
     FROM
     charging_station cs
     LEFT JOIN rec_merchant rm ON cs.property_owner_merhant_id = rm.merchant_id
@@ -359,18 +360,23 @@ def runtypeMonitoringOverview():
 
     """
     DF_station = SQL(sql)
-    DF_station = DF_station[DF_station['station_category'].isin(target_categories)]
-    DF_station.loc[DF_station['station_category'] == '高速', 'station_category'] = '高速公共'
-
-    DF_station = DF_station[DF_station['investment_amount'].notna()]
-    ybzdsl = len(DF_station)
+    # 站点数量使用非金额口径；金额链路继续保留原始的三种状态数据。
+    DF_station_count = DF_station.copy()
+    DF_station_count.loc[DF_station_count['station_category'] == '高速', 'station_category'] = '高速公共'
+    DF_station_count = DF_station_count[DF_station_count['station_category'].isin(target_categories)]
+    DF_station_count['commissioning_time'] = pd.to_datetime(DF_station_count['commissioning_time'], errors='coerce')
+    DF_station_count = DF_station_count[DF_station_count['commissioning_time'].dt.strftime('%Y%m') <= M]
+    DF_station_count = DF_station_count[
+        DF_station_count['operation_status'].isin(['投运', '停运'])
+    ].drop_duplicates(subset=['station_no']).copy()
+    ybzdsl = DF_station_count['station_no'].nunique()
     print(f"站点数量{ybzdsl}")
-    csgg_zdsl = len(DF_station[DF_station['station_category'] == '城市公共'])
-    zkzy_zdsl = len(DF_station[DF_station['station_category'] == '重卡专用'])
-    gongjiao_zdsl = len(DF_station[DF_station['station_category'] == '公交专用'])
-    gaosu_zdsl = len(DF_station[DF_station['station_category'] == '高速公共'])
-    xiaoqu_zdsl = len(DF_station[DF_station['station_category'] == '小区有序'])
-    qita_zdsl = len(DF_station[DF_station['station_category'] == '其他专用'])
+    csgg_zdsl = len(DF_station_count[DF_station_count['station_category'] == '城市公共'])
+    zkzy_zdsl = len(DF_station_count[DF_station_count['station_category'] == '重卡专用'])
+    gongjiao_zdsl = len(DF_station_count[DF_station_count['station_category'] == '公交专用'])
+    gaosu_zdsl = len(DF_station_count[DF_station_count['station_category'] == '高速公共'])
+    xiaoqu_zdsl = len(DF_station_count[DF_station_count['station_category'] == '小区有序'])
+    qita_zdsl = len(DF_station_count[DF_station_count['station_category'] == '其他专用'])
     sql = f"""
     select station_no,sum(total_subsidy) as total_subsidy from dp_subsidy_NEW
     GROUP BY station_no

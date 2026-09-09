@@ -163,11 +163,8 @@ def runcityPublic_typeMonitoring():
     # In[743]:
 
     target_categories = ['城市公共', '高速公共', '重卡专用', '公交专用', '小区有序', '其他专用','V2G']
-    DF_SCDD = DF_SCDD[DF_SCDD['station_category'].isin(target_categories)]
-
-    # In[744]:
-
     DF_SCDD.loc[DF_SCDD['station_category'] == '高速', 'station_category'] = '高速公共'
+    DF_SCDD = DF_SCDD[DF_SCDD['station_category'].isin(target_categories)]
 
     # In[ ]:
 
@@ -6348,11 +6345,15 @@ def runcityPublic_typeMonitoring():
 
     """
     DF_station = SQL(sql)
+    DF_station['station_category'] = DF_station['station_category'].replace({'高速': '高速公共'})
+    DF_station = DF_station[DF_station['station_category'].isin(target_categories)]
+    DF_station['commissioning_time'] = pd.to_datetime(DF_station['commissioning_time'], errors='coerce')
+    DF_station = DF_station[DF_station['commissioning_time'].dt.strftime('%Y%m') <= M]
 
     DF_station_count = DF_station[
         DF_station['operation_status'].isin(['投运', '停运'])
-        ].copy()
-    ybzdsl = len(DF_station_count)
+        ].drop_duplicates(subset=['station_no']).copy()
+    ybzdsl = DF_station_count['station_no'].nunique()
     print(f"站点数量{ybzdsl}")
     csgg_zdsl = len(DF_station_count[DF_station_count['station_category'] == '城市公共'])
     print(f'城市公共站点数：{csgg_zdsl}')
@@ -13080,7 +13081,7 @@ def runcityPublic_typeMonitoring():
         {
             "title": "运维情况",
             "content": [
-                {"name": "本月单桩工单数量", "value": round(csgg_gd05, 2), "unit": '单'}
+                {"name": "本月单桩工单数量", "value": round(float(csgg_gd05), 2), "unit": '单'}
             ],
             "trend": t4
         }
@@ -13229,7 +13230,7 @@ def runcityPublic_typeMonitoring():
         {
             "title": "运维情况",
             "content": [
-                {"name": "本月单桩工单数量", "value": float(zkzy_gd05), "unit": '单'}
+                {"name": "本月单桩工单数量", "value": round(float(zkzy_gd05), 2), "unit": '单'}
             ],
             "trend": q4
         }
@@ -13381,7 +13382,7 @@ def runcityPublic_typeMonitoring():
         {
             "title": "运维情况",
             "content": [
-                {"name": "本月单桩工单数量", "value": round(gjzy_gd05, 2), "unit": '单'}
+                {"name": "本月单桩工单数量", "value": round(float(gjzy_gd05), 2), "unit": '单'}
             ],
             "trend": w4
         }
@@ -13532,7 +13533,7 @@ def runcityPublic_typeMonitoring():
         {
             "title": "运维情况",
             "content": [
-                {"name": "本月单桩工单数量", "value": round(gsgg_gd05, 2), "unit": '单'}
+                {"name": "本月单桩工单数量", "value": round(float(gsgg_gd05), 2), "unit": '单'}
             ],
             "trend": e4
         }
@@ -13679,7 +13680,7 @@ def runcityPublic_typeMonitoring():
         {
             "title": "运维情况",
             "content": [
-                {"name": "本月单桩工单数量", "value": round(xqyx_gd05, 2), "unit": '单'}
+                {"name": "本月单桩工单数量", "value": round(float(xqyx_gd05), 2), "unit": '单'}
             ],
             "trend": r4
         }
@@ -13821,7 +13822,7 @@ def runcityPublic_typeMonitoring():
         {
             "title": "运维情况",
             "content": [
-                {"name": "本月单桩工单数量", "value": round(qtzy_gd05, 2), "unit": '单'}
+                {"name": "本月单桩工单数量", "value": round(float(qtzy_gd05), 2), "unit": '单'}
             ],
             "trend": z4
         }
@@ -13974,7 +13975,7 @@ def runcityPublic_typeMonitoring():
         {
             "title": "运维情况",
             "content": [
-                {"name": "本月单桩工单数量", "value": round(v2g_gd05, 2), "unit": '单'}
+                {"name": "本月单桩工单数量", "value": round(float(v2g_gd05), 2), "unit": '单'}
             ],
             "trend": j4
         }

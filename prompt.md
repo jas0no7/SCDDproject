@@ -1,245 +1,136 @@
-[industryAndProvincialCompany.py](./modules/industryAndProvincialCompany.py)
-请你查看一下数据表的数据生成过程，其中表中的部分指标是否都有与金额有关的指标？另外还有没有漏下的表
-dp_industrial_unit_TopKeyMetrics1、dp_main_unit_TopKeyMetrics1
-dp_industrial_unit_Left_Charge_Inco_Qy、dp_main_unit_Left_Charge_Inco_Qy
-dp_industrial_unit_Left_Charge_Inco_Yy、dp_main_unit_Left_Charge_Inco_Yy
-dp_industrial_unit_Left_Charge_Inco_Zd、dp_main_unit_Left_Charge_Inco_Zd
-dp_industrial_unit_interconnected、dp_unit_interconnected、
-dp_industrial_unit_Left_Charge_Inco_Qy、dp_main_unit_Left_Charge_Inco_Qy
-dp_industrial_unit_Left_Charge_Inco_Yy、dp_main_unit_Left_Charge_Inco_Yy
-dp_industrial_unit_Left_Charge_Inco_Zd、dp_main_unit_Left_Charge_Inco_Zd
-dp_industrial_unit_interconnected、dp_unit_interconnected
-
-1、顶部指标和联动表的年度订单被固定筛选为 2025，没有使用动态变量 year。当统计月份不是 2025
-年时，“本年累计充电收入”会错误。[industryAndProvincialCompany.py (line 388)](/Users/zhangshuai/project_all/edac/业务五部/SCDDproject/modules/industryAndProvincialCompany.py:388)、[联动数据处 (line 3109)](/Users/zhangshuai/project_all/edac/业务五部/SCDDproject/modules/industryAndProvincialCompany.py:3109)
-
-2、联动表 chart4 实际通过 pct_change()
-计算环比，但图例写的是“同比增长率”。[industryAndProvincialCompany.py (line 3493)](/Users/zhangshuai/project_all/edac/业务五部/SCDDproject/modules/industryAndProvincialCompany.py:3493)
-
-3、两张 Inco_Zd 直接通过 .values[0]读取当月和上年同期收入。缺少对应月份数据时会抛出索引异常，上年同期收入为 0
-时同比计算也会出现除零问题。[industryAndProvincialCompany.py (line 2946)](/Users/zhangshuai/project_all/edac/业务五部/SCDDproject/modules/industryAndProvincialCompany.py:2946)
-
-产业单位 = charge_station.merchant_nature in ("产业单位","综合能源")
-省公司 = charge_station.merchant_nature = "电力公司"、
-
-功率利用率 这个指标 不再使用 现有的计算规则，而是从 数据库中直接读取，读出来即用，capacity_utilization_rate 字段即为 功率利用率
-其中
-sql = """
-select pue.*,cs.* from dp_pue_capacity_utilization pue left join charge_station cs
-on pue.station_code = cs.station_id
-where cs.merchant_nature in ("产业单位","综合能源","电力公司")
-"
-
-其中 dp_pue_capacity_utilization 表的数据库存在
-
-连接地址：
-192.168.0.217
-端口：
-1106
-数据库名称：
-scdd_db_v2
-用户名
-root
-密码
-edac123456  
-你可以连上看看
-CREATE TABLE IF NOT EXISTS `dp_pue_capacity_utilization` (
-`id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT COMMENT '自增主键',
-`first_level_owner` VARCHAR(100) NOT NULL COMMENT '一级产权',
-`second_level_owner` VARCHAR(150) NOT NULL COMMENT '二级产权',
-`third_level_owner` VARCHAR(150) NOT NULL COMMENT '三级产权',
-`organization_type` VARCHAR(50) NOT NULL COMMENT '单位类型',
-`province` VARCHAR(50) NOT NULL COMMENT '行政省份',
-`city` VARCHAR(50) NOT NULL COMMENT '行政地市',
-`district_county` VARCHAR(50) NOT NULL COMMENT '行政区县',
-`station_code` VARCHAR(32) NOT NULL COMMENT '站编码',
-`station_name` VARCHAR(200) NOT NULL COMMENT '站名称',
-`station_address` VARCHAR(500) NOT NULL COMMENT '站地址',
-`commissioned_at` DATETIME NOT NULL COMMENT '站投运时间',
-`station_type` VARCHAR(50) NOT NULL COMMENT '站类型',
-`total_operating_hours` DECIMAL(14, 2) NOT NULL COMMENT '运行总时长(小时)',
-`total_charging_hours` DECIMAL(14, 2) NULL COMMENT '充电总时长(小时)',
-`time_utilization_rate` DECIMAL(9, 6) NULL COMMENT '时长利用率(%)',
-`capacity_utilization_rate` DECIMAL(9, 6) NULL COMMENT '容量利用率(%)',
-`total_capacity_kwh` DECIMAL(18, 3) NOT NULL COMMENT '总容量(千瓦时)',
-`total_charging_energy_kwh` DECIMAL(18, 3) NULL COMMENT '总充电量(千瓦时)',
-`data_category` VARCHAR(50) NOT NULL COMMENT '来源分类',
-`month` VARCHAR(6) NOT NULL COMMENT '月份',
-PRIMARY KEY (`id`),
-KEY `idx_station_code` (`station_code`),
-KEY `idx_region` (`province`, `city`, `district_county`),
-KEY `idx_commissioned_at` (`commissioned_at`),
-KEY `idx_data_category` (`data_category`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
-COMMENT='容量利用率-定期维护';
-
-改为一个更简洁的版本，从 scdd_rec_rules中 反编译出 清分规则，插入到 dp_profit_sharing1 中，
-其中dp_profit_sharing1的字段为：CREATE TABLE `dp_profit_sharing1` (
-`station_no` varchar(255) NOT NULL COMMENT '站点编号',
-`merchant_name` text COMMENT '商户名称',
-`ddProfitRation` text COMMENT '清分规则',
-`ddProfitRationP` text COMMENT '图片地址',
-PRIMARY KEY (`station_no`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='站点清分规则码表';
-
-`ddProfitRationP` text COMMENT '图片地址',要空着不填写，把清分规则填入到ddProfitRation中，如果改站点/商户没有清分规则就用‘备注’
-
-# 直接生成清分规则表
-
-## Summary
-
-只修改 `modules/socialCharger_new.py`，在现有查询 `dp_profit_sharing1` 之前直接完成规则读取和写入，不增加额外模块或公共函数。
-
-## Implementation
-
-1. 执行 `SELECT`，从 `scdd_rec_rules` 读取：
-    - `rules_id`
-    - `merchant_id`
-    - `biz_mode`
-    - `profit_detail`
-
-2. 解析 `profit_detail`：
-    - 从 `stationNoS` 找到规则对应站点。
-    - 将比例、时间节点、年度阶梯等转换为可读清分规则。
-    - 有清分规则时使用反编译规则。
-    - 没有清分规则时使用 JSON 的 `remark`。
-    - 删除 `remark` 开头的 `备注：` 和换行。
-    - 两者都没有时使用 `备注`。
-
-3. 直接批量执行：
-
-```sql
-INSERT INTO dp_profit_sharing1
-    (station_no, merchant_name, ddProfitRation, ddProfitRationP)
-VALUES (%s, %s, %s, NULL) ON DUPLICATE KEY
-UPDATE
-    merchant_name =
-VALUES (merchant_name), ddProfitRation =
-VALUES (ddProfitRation), ddProfitRationP = NULL
-```
-
-4. 提交后继续执行原代码：
-
-```python
-sql = """
-select station_no, ddProfitRation, ddProfitRationP
-from dp_profit_sharing1;
-"""
-df_gz = SQL(sql)
-```
-
-## Verification
-
-- 检查规则比例和时间档位反编译正确。
-- 检查无规则站点使用清洗后的 `remark`。
-- 检查 `ddProfitRationP` 始终为空。
-- 检查写入提交发生在 `df_gz` 查询之前。
-- 运行 Python 语法检查。
-
-
-[companyWarningOverview.py](./modules/companyWarningOverview.py)
-
-
-[companyWarningStations.py](./modules/companyWarningStations.py)
-确认 此页面的筛选规则是否都变成了 “投运+停运”
-
-确认筛选规则是否都变成了  charging_station.merchant_nature = '电动公司'
-
-
-
-
-
-sql4 = """
-SELECT
-cs.station_no,
-JSON_UNQUOTE(JSON_EXTRACT(sr.profit_detail, '$.parkingFee')) AS parking_fee
-FROM
-charging_station cs
-LEFT JOIN
-rec_merchant_rec_station rmr ON cs.station_no = rmr.station_on
-LEFT JOIN
-scdd_rec_rules sr ON rmr.merchant_id = sr.merchant_id
-where cs.merchant_nature = '电动公司'
-and JSON_UNQUOTE(JSON_EXTRACT(sr.profit_detail, '$.parkingFee')) IS NOT NULL;
-"""
-
-
-
-
-
-
-在OverviewTypeMonitoring页面中，存在一个bug，就是比如：近一年投资趋势等等所有的 双/三及以上 折线图。，当我 只选择一个类型时，折线图上标注的为 我选择的类型，但是我选择第二个类型后 我的数据会变成第二个类型的
-
-
-
-
-
-那为什么 站点名称 ： 花荄镇联丰村停车场充电站 ，站编码 ：30751001700000141 在表 dp_profit_sharing1中 的数据是：
-站点编号  商户名称  清分规则  图片地址
-30751001700000141 米昂扬滕飞文化旅游有限公司  社会运营商暂未分成
-
-
-但是 在页面上 显示的却是：图片加载失败
-
-
-
-
-
-
-请你仔细研读这个代码中每个技改前后合并 等等的数据逻辑
-现在我已经将传入的固定 技改前后站点ID和站点名称 写入了mysql数据表，请你帮我改成从数据库中读取，另外需要left join charging_station
-这个数据库的配置为
-{192.168.0.217
-root
-edac123456
-1006
-scdd_db_v2}
-你可以在此对话框中 连上去看table的结构 但是不能将配置信息写入到代码中
-
-
-CREATE TABLE IF NOT EXISTS `dp_station_tech_upgrade_mapping` (
-  `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT COMMENT '主键ID',
-  `old_code` VARCHAR(50) NOT NULL COMMENT '技改前编号',
-  `old_name` VARCHAR(200) NOT NULL COMMENT '技改前名称',
-  `new_code` VARCHAR(50) NOT NULL COMMENT '技改后编号',
-  `new_name` VARCHAR(200) NOT NULL COMMENT '技改后名称',
-  PRIMARY KEY (`id`),
-  UNIQUE KEY `uk_old_code` (`old_code`),
-  KEY `idx_new_code` (`new_code`)
-) ENGINE=InnoDB
-  DEFAULT CHARSET=utf8mb4
-  COLLATE=utf8mb4_unicode_ci
-  COMMENT='充电站技改映射表';
-   
-INSERT INTO dp_station_tech_upgrade_mapping
-(old_code, old_name, new_code, new_name)
-VALUES
-('300003000100002472', '沪蓉高速遂宁服务区公共充电站成都方向',
- '300003000100017539', '沪蓉高速遂宁服务区公共充电站（成都方向）'),
-
-('300003000100002473', '沪蓉高速遂宁服务区公共充电站上海方向',
- '300003000100017538', '沪蓉高速遂宁服务区公共充电站（上海方向）'),
-
-('300003013200011', '四川省成都市成华区麻石桥充电站',
- '300003000100019487', '四川省成都市成华区麻石桥城市公共充电站'),
-
-('300003013200099', '四川省成都市成华区麻石桥充电站二期',
- '300003000100019487', '四川省成都市成华区麻石桥城市公共充电站'),
-
-('300003013200108', '四川省成都市彭州市濛阳镇供电所电动汽车充电站',
- '300003000100019488', '四川省成都市彭州市濛阳镇供电所公共充电站');
-
-
-现在这几个技改站点是 固定的站点，现在需要你保持 原来所有 技改站点的 所需要 的数据信息 全部都 由 原来的表select不变 ，但是 表的 技改前后的映射关系 变为从 
-dp_station_tech_upgrade_mapping中读取，且 仅用来体现技改站点技改前后的映射表
-
-
-
-
-
-
-
-
-
-
-所有 技改站点的 所需要 的数据信息 全部都 由 原来的表select，dp_station_tech_upgrade_mapping 仅用来体现技改站点技改前后的映射表   
+请你帮我仔细核查以下五个问题，次本地环境没有生产数据库 只核查代码逻辑
+1、
+    [panoramaOverview.py](modules/panoramaOverview.py)请你帮我看下这里面的。 DF.loc[DF['title'] == '
+    公司回本进度', ['totalSite', 'rate', 'site']] = [str(i) for i in [d1, d3, d2]]中的
+    totalSite 这个字段 应该和 [cityPublic_typeMonitoring.py](modules/cityPublic_typeMonitoring.py)中的{
+    table_comment = "类型检测_横幅"
+    column_comments = {
+    'targetData': '横幅',
+    'update_time': '更新日期'
+    }
+    DF_targetData = pd.DataFrame([{
+    'targetData': json.dumps(targetData, ensure_ascii=False),
+    'update_time': M
+    }])中的{
+    "title": "站点总数",
+    "value": str(int(ybzdsl)),
+    "unit": "座",
+    "prefix": "共计"
+    },}
+    一致才对吧 都应该是 筛选的 【投运+停运】
+
+2、
+    [panoramaOverview.py](modules/panoramaOverview.py)请你帮我看下这里面的
+    【 DF.loc[DF['title'] == '公司自建站点情况', ['chargingCable', 'chargingCapacity']] = [str(i) for i in
+    [int(d10), f"{d11:.2f}"]]】中的
+    chargingCable应该和[typeMonitoringOverview.py](modules/typeMonitoringOverview.py)中的
+    {table_comment = "类型检测_首页_四川电动旗下基础设施建设现状"
+    column_comments = {
+    'infrastructure': '四川电动旗下基础设施建设现状',
+    'update_time': '更新日期'
+    }
+    DF_scdd_Infrastructure = pd.DataFrame([{
+    'infrastructure': infrastructure,
+    'update_time': M
+    }])
+    
+        import_data_with_cursor(
+            df=DF_scdd_Infrastructure,
+            table_name="dp_scdd_Infrastructure",
+    
+            table_comment=table_comment,
+            column_comments=column_comments,
+            append_data=False,
+            update_columns=True
+        )}
+    
+    中的 total_guns 一致吧。都是筛选的 【投运+停运】
+
+3、
+    [industryAndProvincialCompany.py](modules/industryAndProvincialCompany.py)中的  
+    { DF = pd.DataFrame()
+    x1 = [
+    {'title': '累计接入充电枪数', 'value': d1, 'unit': '个'},
+    {'title': '本年功率利用率', 'value': d2, 'unit': '%'},
+    {'title': '本年累计充电量', 'value': d3, 'unit': '万kWh'},
+    {'title': '本年累计充电收入', 'value': d4, 'unit': '万元'}]
+    x1 = json.dumps(x1, ensure_ascii=False)
+    DF = pd.DataFrame({
+    'target': [x1],
+    'month': [M]
+    })
+    DF
+    
+        # ### 数据存储
+    
+        # In[35]:
+    
+    
+        # 定义注释
+        table_comment = "产业单位接入情况页-产业单位接入情况-顶部的4个重点展示数据"
+        column_comments = {
+            'target': '重点指标展示1',
+            'month': '年月'
+        }
+    
+        # 执行导入（覆盖数据，更新列结构）
+        import_data_with_cursor(
+            df=DF,
+            table_name="dp_industrial_unit_TopKeyMetrics1",
+            table_comment=table_comment,
+            column_comments=column_comments
+        )}  和 {
+        DF = pd.DataFrame()
+        x1 = [
+            {'title': '累计接入充电枪数', 'value': d1, 'unit': '个'},
+            {'title': '本年功率利用率', 'value': d2, 'unit': '%'},
+            {'title': '本年累计充电量', 'value': d3, 'unit': '万kWh'},
+            {'title': '本年累计充电收入', 'value': d4, 'unit': '万元'}]
+        x1 = json.dumps(x1, ensure_ascii=False)
+        DF = pd.DataFrame({
+            'target': [x1],
+            'month': [M]
+        })
+        DF
+    
+        # ### 数据存储
+    
+        # In[39]:
+    
+    
+        # 定义注释
+        table_comment = "主业单位接入情况页-主业单位接入情况-顶部的4个重点展示数据"
+        column_comments = {
+            'target': '重点指标展示2',
+            'month': '年月'
+        }
+    }
+    应该分别和 [companyWarningOverview.py](modules/companyWarningOverview.py)中的 DF.loc[DF['title'] == '社会桩接入情况', ['chargingCable', 'chargingCapacity']] = [str(i) for i in
+                                                                                          [int(d4), f"{d5:.2f}"]]
+        DF.loc[DF['title'] == '产业单位接入情况', ['chargingCable', 'chargingCapacity']] = [str(i) for i in
+                                                                                            [int(d6), f"{d7:.2f}"]]
+    中的chargingCapacity 一致。应该都是 （投运+退运+停运） 三个 因为是累计的
+
+4、
+    [techUpgradeStation.py](modules/techUpgradeStation.py) 技改站点的{ table_comment = "技改站点_技改成效总览"
+    column_comments = {
+        'result': '技改成效总览',
+        'update_time': '更新日期'
+    }
+    DF = pd.DataFrame([{
+        'result': json.dumps(result, ensure_ascii=False),
+        'update_time': M
+    }])
+
+    import_data_with_cursor(
+        df=DF,
+        table_name="dp_jigai_all",
+
+        table_comment=table_comment,
+        column_comments=column_comments,
+        append_data=False,
+        update_columns=True
+    )}   为什么技改前的 故障率、停运率、离线率、一次成功率都为0.功率利用率变成了50.xx% 这种数字？正常应该是 个位数
+
+5、
+    社会桩的 本年功率利用率 是不是用的 平均值？ 怀疑跟下面的数值对不上

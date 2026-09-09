@@ -44,6 +44,10 @@ def runkeyStationInternalCompetition():
     # monthrange返回元组(当月第一天是星期几, 当月天数)，取第二个值
     _, days_in_month = calendar.monthrange(year, month)
 
+    report_next_month_start_sql = (
+        pd.to_datetime(M, format='%Y%m') + pd.offsets.MonthBegin(1)
+    ).strftime('%Y-%m-%d')
+
     # ## 数据读取
 
     # ### df1-站点基础信息表（含初始投资）
@@ -4208,6 +4212,50 @@ def runkeyStationInternalCompetition():
         primary_keys=['siteNum', 'month']
     )
 
+    # 运营画像与顶部站点数量使用同一份站点清单。
+    # 口径与 cityPublic_typeMonitoring.py 一致：投运/停运、报告月末前投运、站点编号去重。
+    station_count_categories = [
+        '城市公共', '高速公共', '重卡专用', '公交专用',
+        '小区有序', '其他专用', 'V2G'
+    ]
+    sql_station_count = f"""
+    SELECT
+        cs.station_no,
+        cs.station_name,
+        cs.station_category,
+        cs.operation_status,
+        cs.commissioning_time
+    FROM charging_station cs
+    LEFT JOIN rec_merchant rm
+      ON cs.property_owner_merhant_id = rm.merchant_id
+    WHERE cs.merchant_nature = '电动公司'
+      AND cs.operation_status IN ('投运', '停运')
+      AND cs.commissioning_time < '{report_next_month_start_sql}'
+    """
+    station_count_base = SQL(sql_station_count)
+    station_count_base.loc[
+        station_count_base['station_category'] == '高速',
+        'station_category'
+    ] = '高速公共'
+    station_count_base = station_count_base[
+        station_count_base['station_category'].isin(station_count_categories)
+    ].copy()
+    station_count_base['commissioning_time'] = pd.to_datetime(
+        station_count_base['commissioning_time'], errors='coerce'
+    )
+    station_count_base = station_count_base[
+        station_count_base['commissioning_time'].dt.strftime('%Y%m') <= M
+    ]
+    station_count_base = station_count_base[
+        station_count_base['operation_status'].isin(['投运', '停运'])
+    ].drop_duplicates(subset=['station_no']).copy()
+    station_counts = station_count_base['station_category'].value_counts().to_dict()
+    operation_population_counts = {
+        'df_operation_1': int(station_counts.get('高速公共', 0)),
+        'df_operation_2': int(station_counts.get('城市公共', 0)),
+        'df_operation_3': int(station_counts.get('重卡专用', 0)),
+    }
+
     # ### 运营画像
 
     # In[471]:
@@ -4270,6 +4318,47 @@ def runkeyStationInternalCompetition():
 
     df_operation_3 = pd.merge(df_operation_3, topsis_operation_3[['station_no', '综合得分(调整)', '排名']],
                               on='station_no', how='left')
+
+    def align_operation_population(operation_df, station_category):
+        """将运营画像的样本统一到顶部站点数量的口径，并重新计算排名。"""
+        target_stations = station_count_base[
+            station_count_base['station_category'] == station_category
+        ][['station_no', 'station_name', 'station_category']]
+
+        # 以站点编号为唯一键，避免后续 merge 因重复编号放大记录数。
+        operation_df = operation_df.drop_duplicates(subset=['station_no']).copy()
+        score_columns = ['经济效益', '设备质量', '使用效率']
+        operation_scores = operation_df[
+            ['station_no'] + score_columns
+        ]
+        aligned = target_stations.merge(
+            operation_scores, on='station_no', how='left'
+        )
+        aligned[score_columns] = aligned[score_columns].apply(
+            pd.to_numeric, errors='coerce'
+        ).fillna(0)
+
+        if aligned.empty:
+            aligned['综合得分(调整)'] = pd.Series(dtype=float)
+            aligned['排名'] = pd.Series(dtype='Int64')
+            return aligned
+
+        topsis_result = cal_topsis(
+            aligned[['station_no'] + score_columns].copy(),
+            'station_no',
+            np.array([1 / 3, 1 / 3, 1 / 3])
+        )
+        return pd.merge(
+            aligned,
+            topsis_result[['station_no', '综合得分(调整)', '排名']],
+            on='station_no',
+            how='left'
+        )
+
+    # 运营画像排名分母与顶部三类站点总数保持一致。
+    df_operation_1 = align_operation_population(df_operation_1, '高速公共')
+    df_operation_2 = align_operation_population(df_operation_2, '城市公共')
+    df_operation_3 = align_operation_population(df_operation_3, '重卡专用')
 
     # 查看结果
     print(df_operation_1.shape)
@@ -4429,8 +4518,8 @@ def runkeyStationInternalCompetition():
         # 获取当前站点数据
         current_row = df[df['station_no'] == station_no].iloc[0]
 
-        # 站点总数
-        total_stations = len(df)
+        # 站点总数与顶部三类站点数量使用同一统计口径。
+        total_stations = operation_population_counts[source_name]
 
         return [
             {
@@ -4671,10 +4760,9 @@ def runkeyStationInternalCompetition():
 
     # In[479]:
 
-    # 站点数量与运营画像排名使用同一批数据，确保排名分母与顶部站点总数一致
-    highspeed_count = len(df_operation_1)
-    urban_count = len(df_operation_2)
-    truck_count = len(df_operation_3)
+    highspeed_count = operation_population_counts['df_operation_1']
+    urban_count = operation_population_counts['df_operation_2']
+    truck_count = operation_population_counts['df_operation_3']
 
     # 打印结果
     print(f"高速公共: {highspeed_count}座")

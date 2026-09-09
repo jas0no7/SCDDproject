@@ -1079,7 +1079,7 @@ def runpanoramaOverview():
     DF_province = SQL(sql)
 
     def parse_utilization_rate(value):
-        """兼容数据库小数和带百分号的文本。"""
+        """将源表中的比例或百分数统一为 0~1 的比例。"""
         if pd.isna(value):
             return np.nan
 
@@ -1088,9 +1088,10 @@ def runpanoramaOverview():
             return np.nan
 
         try:
-            if text.endswith('%'):
-                return float(text[:-1]) / 100
-            return float(text)
+            numeric_value = float(text[:-1]) / 100 if text.endswith('%') else float(text)
+            # 容量利用率维护表的数值型记录可能直接存储百分数（如 3.25），
+            # 而后续展示层会统一乘 100，因此必须先转为比例。
+            return numeric_value / 100 if numeric_value > 1 else numeric_value
         except (TypeError, ValueError):
             return np.nan
 
@@ -2198,9 +2199,30 @@ def runpanoramaOverview():
 
     # In[708]:
 
-    df1['commissioning_year'] = df1['commissioning_time'].dt.year.astype(str)
-    df1['commissioning_year_month'] = df1['commissioning_time'].dt.strftime('%Y%m')
-    d1 = df1[(df1['operation_status'] == '投运') & (df1['commissioning_year_month'] <= M)].shape[0]
+    # 回本进度的站点总数与类型监测首页保持同一口径：
+    # 电动公司、投运/停运、截至统计月、七类站点，并按站点编号去重。
+    target_categories = ['城市公共', '高速公共', '重卡专用', '公交专用', '小区有序', '其他专用', 'V2G']
+    sql = """
+    SELECT station_no, station_category, operation_status, commissioning_time,
+           dc_charge_point_count, ac_charge_point_count
+    FROM charging_station
+    WHERE merchant_nature = '电动公司'
+      AND operation_status IN ('投运', '停运')
+    """
+    DF_SCDD_statistics = SQL(sql)
+    DF_SCDD_statistics['commissioning_time'] = pd.to_datetime(
+        DF_SCDD_statistics['commissioning_time'], errors='coerce'
+    )
+    DF_SCDD_statistics['station_category'] = DF_SCDD_statistics['station_category'].replace({'高速': '高速公共'})
+    DF_SCDD_statistics = DF_SCDD_statistics[
+        (DF_SCDD_statistics['station_category'].isin(target_categories)) &
+        (DF_SCDD_statistics['commissioning_time'].dt.strftime('%Y%m') <= M)
+    ].drop_duplicates(subset=['station_no']).copy()
+    DF_SCDD_statistics['charge_point_count'] = (
+        DF_SCDD_statistics['dc_charge_point_count'].fillna(0) +
+        DF_SCDD_statistics['ac_charge_point_count'].fillna(0)
+    )
+    d1 = DF_SCDD_statistics['station_no'].nunique()
     d1
 
     # In[709]:
@@ -2209,12 +2231,17 @@ def runpanoramaOverview():
 
     # In[710]:
 
-    d2 = data10[(data10['回本状态标签'] == '已回本') & (data10['commissioning_year_month'] <= M)].shape[0]
+    # 回本明细中没有匹配记录的统计基表站点按未回本处理，分子不能超过统一分母。
+    payback_station_nos = set(data10.loc[
+        (data10['回本状态标签'] == '已回本') &
+        (data10['commissioning_year_month'] <= M), 'station_no'
+    ].astype(str))
+    d2 = DF_SCDD_statistics['station_no'].astype(str).isin(payback_station_nos).sum()
     d2
 
     # In[711]:
 
-    d3 = f"{d2 / d1 * 100:.2f}"
+    d3 = f"{(d2 / d1 * 100) if d1 else 0:.2f}"
     d3
 
     # In[ ]:
@@ -2392,8 +2419,8 @@ def runpanoramaOverview():
     # 处理投运时间
     DF_SCDD['commissioning_year_month'] = DF_SCDD['commissioning_time'].dt.strftime('%Y%m')
     # 累计接入充电枪统计投运和停运站点。
-    d10 = DF_SCDD[(DF_SCDD['operation_status'].isin(['投运', '停运'])) & (DF_SCDD['commissioning_year_month'] <= M)][
-        'charge_point_count'].sum()
+    # 与公司回本进度、类型监测首页复用统一自建站统计基表。
+    d10 = DF_SCDD_statistics['charge_point_count'].sum()
     d10
 
     # ### 本年累计充电量

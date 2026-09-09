@@ -571,16 +571,13 @@ def runkeyStationExternalCompetition():
     competitorStationCompareDimensions['power_rate'] = competitorStationCompareDimensions['power_rate'].round(2)
 
     # In[286]:
-
+    for col in ['power_rate','electricity_fee','service_fee','charging_quantity_per_gun','electricity_quantity', 'equip_power']:
+        if col in competitorStationCompareDimensions.columns:
+            competitorStationCompareDimensions[col] = competitorStationCompareDimensions[col].astype(float)
     competitorStationCompareDimensions['charging_quantity_per_gun'] = competitorStationCompareDimensions[
         'charging_quantity_per_gun'].round(2)
 
     # In[287]:
-
-    # 转为 float，避免 Decimal 类型参与运算报错
-    for col in ['power_rate', 'electricity_fee', 'service_fee', 'charging_quantity_per_gun', 'electricity_quantity', 'equip_power']:
-        if col in competitorStationCompareDimensions.columns:
-            competitorStationCompareDimensions[col] = competitorStationCompareDimensions[col].astype(float)
 
     # 按重点站分组计算功率效能比，并直接在原 DF 中新增列
     competitorStationCompareDimensions['power_efficiency_ratio'] = \

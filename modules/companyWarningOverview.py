@@ -35,15 +35,19 @@ def runcompanyWarningOverview():
     df1 = df1[df1['commissioning_year_month'] <= M]
     print('筛选投运时间后：', df1.shape)
 
+    station_count_base = (
+        df1[df1['operation_status'].isin(['投运', '停运'])]
+        .drop_duplicates(subset=['station_no'])
+        .copy()
+    )
+
     # 金额及金额派生指标使用投运、退运、停运站点；非金额指标仅使用投运、停运站点。
     amount_station_statuses = ['投运', '退运', '停运']
     non_amount_station_statuses = ['投运', '停运']
     amount_station_nos = set(
         df1.loc[df1['operation_status'].isin(amount_station_statuses), 'station_no']
     )
-    non_amount_station_nos = set(
-        df1.loc[df1['operation_status'].isin(non_amount_station_statuses), 'station_no']
-    )
+    non_amount_station_nos = set(station_count_base['station_no'])
     print('金额指标站点数量（投运、退运、停运）：', len(amount_station_nos))
     print('非金额指标站点数量（投运、停运）：', len(non_amount_station_nos))
 
@@ -974,11 +978,13 @@ def runcompanyWarningOverview():
     # In[66]:
 
     # 将初始投资为0的站点补入回本汇总全集，状态口径与金额链路保持一致
-    data11 = df1[df1['station_no'].isin(amount_station_nos)][
+    data11 = station_count_base[
         ['station_no', 'station_name', 'city', 'station_category']
     ]
     data11.columns = ['站点编号', '站点名称', '所属区域', '站点类型']
     data11 = pd.merge(data11, data10, how='left', on=['站点编号', '站点名称', '所属区域', '站点类型']).fillna(0)
+    data11['回本状态标签'] = data11['回本状态标签'].replace(0, '未回本')
+    data11['回本类型标签'] = data11['回本类型标签'].replace(0, '正常待回本')
     print(data11.shape)
     data11.head(1)
 
@@ -987,7 +993,7 @@ def runcompanyWarningOverview():
     # In[67]:
 
     # 已回本情况
-    amount_station_count = data11.shape[0]
+    amount_station_count = data11['站点编号'].nunique()
     non_amount_station_count = len(non_amount_station_nos)
     a2 = data11[data11['回本状态标签'] == '已回本'].shape[0]
     rate = round((a2 / amount_station_count) * 100, 2)
@@ -1209,7 +1215,7 @@ def runcompanyWarningOverview():
 
     # In[82]:
 
-    gb1 = data11[data11['总投资（万元）'] != 0].groupby(by='站点类型', as_index=False).agg({'站点编号': 'count'})
+    gb1 = data11.groupby(by='站点类型', as_index=False).agg({'站点编号': 'nunique'})
     gb2 = data11[data11['回本状态标签'] == '已回本'].groupby(by='站点类型', as_index=False).agg({'站点编号': 'count'})
     gb3 = data11[data11['回本状态标签'] == '未回本'].groupby(by='站点类型', as_index=False).agg({'站点编号': 'count'})
     gb4 = data11[data11['回本类型标签'].isin(['正常待回本'])].groupby(by='站点类型', as_index=False).agg({'站点编号': 'count'})

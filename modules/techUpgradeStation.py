@@ -13,6 +13,7 @@ def runtechUpgradeStation():
     import pandas as pd
     from datetime import datetime
     import json
+    import math
     from pandas.tseries.offsets import MonthBegin
     import calendar
     from dateutil.relativedelta import relativedelta
@@ -22,6 +23,26 @@ def runtechUpgradeStation():
     pd.options.display.float_format = '{:.6f}'.format
 
     # In[6]:
+
+    def clean_json_value(value):
+        """把 pandas/numpy 缺失值清成标准 JSON null。"""
+        if isinstance(value, dict):
+            return {key: clean_json_value(val) for key, val in value.items()}
+        if isinstance(value, (list, tuple)):
+            return [clean_json_value(item) for item in value]
+        if pd.isna(value):
+            return None
+        if isinstance(value, float) and not math.isfinite(value):
+            return None
+        if hasattr(value, 'item'):
+            try:
+                return clean_json_value(value.item())
+            except ValueError:
+                return value
+        return value
+
+    def safe_json_dumps(value):
+        return json.dumps(clean_json_value(value), ensure_ascii=False, allow_nan=False)
 
     def generate_months(start_month, num_months):
         """
@@ -47,6 +68,21 @@ def runtechUpgradeStation():
         df = pd.DataFrame(month_list, columns=['month'])
 
         return df
+
+    def normalize_month_series(series):
+        """将数据库中可能带短横线、日期后缀或小数的月份统一为 YYYYMM。"""
+        return (
+            series.astype(str)
+            .str.replace(r'\D', '', regex=True)
+            .str[:6]
+        )
+
+    def shift_month_year(series, years=1):
+        """按日历年平移月份，用于将技改前同期映射到技改后展示月份。"""
+        normalized = normalize_month_series(series)
+        dates = pd.to_datetime(normalized, format='%Y%m', errors='coerce')
+        shifted = dates + pd.DateOffset(years=years)
+        return shifted.dt.strftime('%Y%m')
 
     # ### 合并
 
@@ -157,9 +193,60 @@ def runtechUpgradeStation():
     reform_post_stations = DF_mapping['new_code'].drop_duplicates().tolist()
     charging_station_nos = list(dict.fromkeys(reform_per_stations + reform_post_stations))
     station_no_sql = ', '.join("'{}'".format(str(code).replace("'", "''")) for code in charging_station_nos)
+    post_station_no_sql = ', '.join(
+        "'{}'".format(str(code).replace("'", "''")) for code in reform_post_stations
+    )
     station_name_by_code = dict(zip(DF_mapping['old_code'], DF_mapping['old_station_db_name']))
     station_name_by_code.update(dict(zip(DF_mapping['new_code'], DF_mapping['new_station_db_name'])))
+    station_name_by_code_str = {
+        str(code).strip(): name for code, name in station_name_by_code.items()
+    }
     site_name_filters = DF_mapping['old_station_db_name'].drop_duplicates().tolist()
+
+    def pair_station_metric_means(pre_df, post_df, pre_columns, post_columns, metric_group):
+        """技改前后分别求均值，再按映射表配对。
+
+        不能先按月份左连接再求均值：前后统计周期不重合时，会把实际存在的
+        技改后数据连接成 NaN，后续又被补成 0。
+        """
+        pre_values = pre_df[['station_name'] + pre_columns].copy()
+        post_values = post_df[['station_name'] + post_columns].copy()
+
+        for col in pre_columns:
+            pre_values[col] = pd.to_numeric(pre_values[col], errors='coerce')
+        for col in post_columns:
+            post_values[col] = pd.to_numeric(post_values[col], errors='coerce')
+
+        pre_means = pre_values.groupby('station_name', as_index=False)[pre_columns].mean()
+        post_means = post_values.groupby('station_name', as_index=False)[post_columns].mean()
+
+        paired = DF_mapping[['old_station_db_name', 'new_station_db_name']].copy()
+        paired = paired.merge(
+            pre_means,
+            left_on='old_station_db_name',
+            right_on='station_name',
+            how='left'
+        ).drop(columns=['station_name'])
+        paired = paired.merge(
+            post_means,
+            left_on='new_station_db_name',
+            right_on='station_name',
+            how='left'
+        ).drop(columns=['station_name'])
+        paired = paired.rename(columns={'old_station_db_name': 'station_name'})
+        paired = paired.drop(columns=['new_station_db_name'])
+        # 汇总均值必须保留缺失值，让 groupby.mean() 仅基于真实观测计算；
+        # 否则站点名称、编码或月份不匹配会被误展示为真实的 0.00%。
+        missing_pre = paired[pre_columns].isna().all(axis=1)
+        missing_post = paired[post_columns].isna().all(axis=1)
+        if missing_pre.any() or missing_post.any():
+            logger.warning(
+                "技改指标存在缺失历史观测：技改前 {} 个站点，技改后 {} 个站点。"
+                .format(int(missing_pre.sum()), int(missing_post.sum()))
+            )
+        paired[f'pre_{metric_group}_data_missing'] = missing_pre
+        paired[f'post_{metric_group}_data_missing'] = missing_post
+        return paired
 
     # ## sql
 
@@ -293,6 +380,9 @@ def runtechUpgradeStation():
       stat_time
     """
     DF_operation = SQL(sql)
+    DF_operation['stat_time'] = (
+        DF_operation['stat_time'].astype(str).str.replace(r'\D', '', regex=True).str[:6]
+    )
     DF_operation['station_name'] = (
         DF_operation['station_code'].map(station_name_by_code)
         .fillna(DF_operation['station_name'])
@@ -331,7 +421,9 @@ def runtechUpgradeStation():
 
     # In[19]:
 
-    DF_success['stat_time'] = DF_success['stat_time'].str.replace('-', '')
+    DF_success['stat_time'] = (
+        DF_success['stat_time'].astype(str).str.replace(r'\D', '', regex=True).str[:6]
+    )
 
     # ### 功率利用率
 
@@ -354,6 +446,8 @@ def runtechUpgradeStation():
       and cs.station_no IN ({station_no_sql})
     """
     DF_cba_pue = SQL(sql)
+    if not DF_cba_pue.empty and 'cba_month' in DF_cba_pue.columns:
+        DF_cba_pue['cba_month'] = normalize_month_series(DF_cba_pue['cba_month'])
 
     # ### 单枪日均充电量
 
@@ -405,6 +499,8 @@ def runtechUpgradeStation():
           AND cba_month BETWEEN '{min(begin1)[:7].replace('-', '')}' AND '{max(end1)[:7].replace('-', '')}'
     """
     df_cba = SQL(sql_cba)
+    if not df_cba.empty and 'cba_month' in df_cba.columns:
+        df_cba['cba_month'] = normalize_month_series(df_cba['cba_month'])
 
     station_map = station_name_by_code
     cba_map = df_cba.set_index(['station_no', 'cba_month'])['rec_cost_elec_cons'].to_dict()
@@ -599,7 +695,8 @@ def runtechUpgradeStation():
 
     # In[42]:
 
-    M_2023 = '2023' + M[4:]
+    # 技改前同期按当前统计月份向前一年计算，不能固定写死为 2023 年。
+    M_2023 = f"{int(M[:4]) - 1}{M[4:]}"
 
     # In[43]:
 
@@ -630,9 +727,16 @@ def runtechUpgradeStation():
     DF_operation2 = pd.merge(
         DF_success,
         DF_operation1,
-        left_on=['station_no', 'stat_time', 'station_name'],
-        right_on=['station_code', 'stat_time', 'station_name'],
-        how='left'
+        left_on=['station_no', 'stat_time'],
+        right_on=['station_code', 'stat_time'],
+        how='outer',
+        suffixes=('_success', '_operation')
+    )
+    DF_operation2['station_no'] = DF_operation2['station_no'].fillna(DF_operation2['station_code'])
+    DF_operation2['station_name'] = (
+        DF_operation2['station_no'].map(station_name_by_code)
+        .fillna(DF_operation2.get('station_name_success'))
+        .fillna(DF_operation2.get('station_name_operation'))
     )
 
     # In[49]:
@@ -641,7 +745,7 @@ def runtechUpgradeStation():
 
     # In[50]:
 
-    DF_operation2 = DF_operation2.fillna(0)
+    # 缺失质量指标保留为空，避免源数据缺失被误展示为真实 0。
 
     # In[51]:
 
@@ -778,8 +882,8 @@ def runtechUpgradeStation():
 
     # In[66]:
 
-    # 获取所有技改前站点编号
-    pre_stations = DF_operation_per['station_name'].unique()
+    # 获取所有技改前站点，使用映射表范围，不能只取有观测值的站点。
+    pre_stations = DF_mapping['old_station_db_name'].drop_duplicates().tolist()
 
     # 创建所有站点和目标月份的笛卡尔积
     import itertools
@@ -787,7 +891,7 @@ def runtechUpgradeStation():
     all_combinations_pre = list(itertools.product(pre_stations, Data_pre['month']))
     df_all_pre = pd.DataFrame(all_combinations_pre, columns=['station_name', 'stat_time'])
 
-    # 合并真实数据，缺失的补 0
+    # 合并真实数据，缺失保留为空
     DF_pre_final = pd.merge(
         df_all_pre,
         DF_operation_per,
@@ -795,23 +899,16 @@ def runtechUpgradeStation():
         how='left'
     )
 
-    # 将缺失的指标值补 0
-    for col in ['per_fault_rate', 'per_offline_rate', 'per_outage_rate', 'per_station_success_rate']:
-        DF_pre_final[col] = DF_pre_final[col].fillna(0)
+    # 图表保留完整月份轴；缺失指标保留为空，避免误展示为真实 0。
 
     # In[67]:
 
-    DF_pre_final['stat_time'] = DF_pre_final['stat_time'].astype(str)
-
-    # 方法 1：简单字符串替换（2022->2024, 2023->2025）
-    DF_pre_final['stat_time'] = (
-        DF_pre_final['stat_time'].astype(str).str.replace('2022','2024').str.replace('2023','2025')
-    )
+    DF_pre_final['stat_time'] = shift_month_year(DF_pre_final['stat_time'])
 
     # In[68]:
 
-    # 获取所有技改后站点编号
-    post_stations = DF_operation_post['station_name'].unique()
+    # 获取所有技改后站点，使用映射表范围，不能只取有观测值的站点。
+    post_stations = DF_mapping['new_station_db_name'].drop_duplicates().tolist()
 
     # 创建所有站点和目标月份的笛卡尔积
     import itertools
@@ -819,7 +916,7 @@ def runtechUpgradeStation():
     all_combinations = list(itertools.product(post_stations, Data['month']))
     df_all = pd.DataFrame(all_combinations, columns=['station_name', 'stat_time'])
 
-    # 合并真实数据，缺失的补 0
+    # 合并真实数据，缺失保留为空
     DF_post_final = pd.merge(
         df_all,
         DF_operation_post,
@@ -827,9 +924,7 @@ def runtechUpgradeStation():
         how='left'
     )
 
-    # 将缺失的指标值补 0
-    for col in ['post_fault_rate', 'post_offline_rate', 'post_outage_rate', 'post_station_success_rate']:
-        DF_post_final[col] = DF_post_final[col].fillna(0)
+    # 图表保留完整月份轴；缺失指标保留为空，避免误展示为真实 0。
 
     # In[69]:
 
@@ -866,13 +961,20 @@ def runtechUpgradeStation():
         'per_station_success_rate', 'post_fault_rate', 'post_offline_rate',
         'post_outage_rate', 'post_station_success_rate'
     ]
-    shebeishiliang[columns_to_average] = shebeishiliang[columns_to_average].astype(float)
-    grouped_means = (
-        shebeishiliang
-            .groupby('station_name')[columns_to_average]
-            .mean()  # 默认会跳过 NaN
-            .reset_index()
-            .fillna(0)  # 如果整列都是 NaN，结果是 NaN，这里再补 0
+    for col in columns_to_average:
+        shebeishiliang[col] = pd.to_numeric(shebeishiliang[col], errors='coerce').fillna(0)
+    grouped_means = pair_station_metric_means(
+        DF_operation_per,
+        DF_operation_post,
+        [
+            'per_fault_rate', 'per_offline_rate', 'per_outage_rate',
+            'per_station_success_rate'
+        ],
+        [
+            'post_fault_rate', 'post_offline_rate', 'post_outage_rate',
+            'post_station_success_rate'
+        ],
+        'quality'
     )
 
     # In[72]:
@@ -907,9 +1009,45 @@ def runtechUpgradeStation():
 
     # In[76]:
 
-    df_d1['pue'] = df_d1['plat_data_charging_volume'].astype(float) / (
-            df_d1['total_power'].astype(float) * df_d1['days'].astype(float) * 24
+    df_d1['pue_denominator'] = (
+        df_d1['total_power'].astype(float) * df_d1['days'].astype(float) * 24
     )
+    df_d1['pue'] = df_d1['plat_data_charging_volume'].astype(float) / df_d1['pue_denominator']
+    invalid_pre_pue = (
+        (df_d1['pue_denominator'] <= 0) |
+        (~df_d1['pue'].replace([float('inf'), float('-inf')], float('nan')).between(0, 1))
+    )
+    if invalid_pre_pue.any():
+        logger.warning(
+            "技改前功率利用率存在 {} 条异常分子/分母记录；将保留原始值供排查。"
+            .format(int(invalid_pre_pue.sum()))
+        )
+
+    # 仅技改后站点的功率利用率读取维护表；技改前继续使用上面的原计算结果。
+    sql_post_pue = f"""
+    SELECT
+      id,
+      station_code,
+      month,
+      capacity_utilization_rate
+    FROM dp_pue_capacity_utilization
+    WHERE station_code IN ({post_station_no_sql})
+    """
+    DF_post_pue = SQL(sql_post_pue)
+    if not DF_post_pue.empty:
+        DF_post_pue['station_code'] = DF_post_pue['station_code'].astype(str).str.strip()
+        DF_post_pue['month'] = normalize_month_series(DF_post_pue['month'])
+        DF_post_pue['capacity_utilization_rate'] = pd.to_numeric(
+            DF_post_pue['capacity_utilization_rate'], errors='coerce'
+        )
+        DF_post_pue = DF_post_pue[
+            DF_post_pue['month'].isin(Data['month'].astype(str))
+        ].copy()
+        # 同站同月有重复记录时，使用最后一条维护记录。
+        DF_post_pue = (
+            DF_post_pue.sort_values('id')
+            .drop_duplicates(subset=['station_code', 'month'], keep='last')
+        )
 
     # ### 单枪日均充电量
 
@@ -942,8 +1080,9 @@ def runtechUpgradeStation():
         "ym": "month",
         "time_rate": "post_time_rate",
         "per_gun": "post_per_gun",
-        "pue": "post_pue",
     })
+    # 技改后的 pue 不能沿用 df_d1 的原计算值，后面按站点、月份从维护表单独合并。
+    post_operating_efficiency = post_operating_efficiency.drop(columns=['pue'])
 
     # In[82]:
 
@@ -964,7 +1103,7 @@ def runtechUpgradeStation():
     # In[84]:
 
     # 获取所有技改前站点编号
-    pre_stations = pre_operating_efficiency['station_name'].unique()
+    pre_stations = DF_mapping['old_station_db_name'].drop_duplicates().tolist()
 
     # 创建所有站点和目标月份的笛卡尔积
     import itertools
@@ -972,7 +1111,7 @@ def runtechUpgradeStation():
     all_combinations_pre = list(itertools.product(pre_stations, Data_pre['month']))
     df_all_pre = pd.DataFrame(all_combinations_pre, columns=['station_name', 'month'])
 
-    # 合并真实数据，缺失的补 0
+    # 合并真实数据，缺失保留为空
     DF_pre_yunying_final = pd.merge(
         df_all_pre,
         pre_operating_efficiency,
@@ -980,23 +1119,60 @@ def runtechUpgradeStation():
         how='left'
     )
 
-    # 将缺失的指标值补 0
-    for col in ['pre_time_rate', 'pre_per_gun', 'pre_pue']:
-        DF_pre_yunying_final[col] = DF_pre_yunying_final[col].fillna(0)
-
-    # In[85]:
-
-    DF_pre_yunying_final['month'] = DF_pre_yunying_final['month'].astype(str)
-    DF_pre_yunying_final['month'] =(
-         DF_pre_yunying_final['month']
-                .str.replace('2022','2024')
-                .str.replace('2023','2025')
+    # 技改前功率利用率按“图表展示月份的同月份逐年回溯”取数。
+    # 例如图表月份为 202604，则依次查找 202604、202504、202404、202304……。
+    # 这和时长利用率、单枪日均充电量的“上一年同期”逻辑不同，必须单独处理。
+    pre_pue_source = pre_operating_efficiency[
+        ['station_name', 'month', 'pre_pue']
+    ].copy()
+    pre_pue_source['month'] = normalize_month_series(pre_pue_source['month'])
+    pre_pue_source['pre_pue'] = pd.to_numeric(
+        pre_pue_source['pre_pue'], errors='coerce'
     )
+    pre_pue_source = pre_pue_source.dropna(subset=['pre_pue'])
+
+    # SQL 查询的起始月份是 202205，回溯到这个月份即可；避免无止境地生成候选月份。
+    pre_history_start = begin1[0][:7].replace('-', '')
+
+    def find_historical_pre_pue(station_name, display_month):
+        """按同月份（含当前展示月份）向前逐年查找第一条有效功率利用率。"""
+        normalized_month = normalize_month_series(pd.Series([display_month])).iloc[0]
+        if pd.isna(normalized_month) or len(str(normalized_month)) != 6:
+            return pd.NA
+
+        display_date = pd.to_datetime(str(normalized_month), format='%Y%m', errors='coerce')
+        if pd.isna(display_date):
+            return pd.NA
+
+        station_rows = pre_pue_source[
+            pre_pue_source['station_name'] == station_name
+        ]
+        if station_rows.empty:
+            return pd.NA
+
+        # 202604 -> 202504 -> 202404 -> 202304 ...
+        for year_offset in range(0, 20):
+            candidate = (display_date - pd.DateOffset(years=year_offset)).strftime('%Y%m')
+            if candidate < pre_history_start:
+                break
+            matched = station_rows[station_rows['month'] == candidate]
+            if not matched.empty:
+                return matched.iloc[-1]['pre_pue']
+        return pd.NA
+
+    # 先把 Data_pre 的上一年同期月份映射成当前图表月份，再覆盖其中的 pre_pue。
+    DF_pre_yunying_final['month'] = shift_month_year(DF_pre_yunying_final['month'])
+    DF_pre_yunying_final['pre_pue'] = DF_pre_yunying_final.apply(
+        lambda row: find_historical_pre_pue(row['station_name'], row['month']),
+        axis=1
+    )
+
+    # 将仍然没有任何历史数据的指标保留为空，避免缺失值被误算为 0。
 
     # In[86]:
 
     # 获取所有技改后站点编号
-    post_stations = post_operating_efficiency['station_name'].unique()
+    post_stations = DF_mapping['new_station_db_name'].drop_duplicates().tolist()
 
     # 创建所有站点和目标月份的笛卡尔积
     import itertools
@@ -1004,7 +1180,7 @@ def runtechUpgradeStation():
     all_combinations = list(itertools.product(post_stations, Data['month']))
     df_all = pd.DataFrame(all_combinations, columns=['station_name', 'month'])
 
-    # 合并真实数据，缺失的补 0
+    # 合并真实数据，缺失保留为空
     DF_post_yunying_final = pd.merge(
         df_all,
         post_operating_efficiency,
@@ -1012,9 +1188,31 @@ def runtechUpgradeStation():
         how='left'
     )
 
-    # 将缺失的指标值补 0
-    for col in ['post_time_rate', 'post_per_gun', 'post_pue']:
-        DF_post_yunying_final[col] = DF_post_yunying_final[col].fillna(0)
+    # 将缺失的指标值保留为空，避免缺失值被误算为 0。
+
+    # 技改后功率利用率完全以维护表为准，并独立于订单聚合进行月度合并。
+    if not DF_post_pue.empty:
+        pue_by_name = DF_post_pue.copy()
+        pue_by_name['station_name'] = pue_by_name['station_code'].map(station_name_by_code_str)
+        pue_by_name = pue_by_name.dropna(subset=['station_name'])[
+            ['station_name', 'month', 'capacity_utilization_rate']
+        ].rename(columns={'capacity_utilization_rate': 'post_pue'})
+        pue_by_name = pue_by_name.drop_duplicates(['station_name', 'month'], keep='last')
+        DF_post_yunying_final = DF_post_yunying_final.merge(
+            pue_by_name, on=['station_name', 'month'], how='left'
+        )
+    else:
+        DF_post_yunying_final['post_pue'] = 0
+    # 维护表无对应月份时保留为空。
+
+    # 汇总使用原始观测，不能将笛卡尔积补齐产生的缺失月份当成 0% 参与均值。
+    post_efficiency_for_mean = post_operating_efficiency.copy()
+    if not DF_post_pue.empty:
+        post_efficiency_for_mean = post_efficiency_for_mean.merge(
+            pue_by_name, on=['station_name', 'month'], how='left'
+        )
+    else:
+        post_efficiency_for_mean['post_pue'] = 0
 
     # In[ ]:
 
@@ -1061,16 +1259,17 @@ def runtechUpgradeStation():
         'post_time_rate', 'post_per_gun', 'post_pue'
     ]
 
-    # 强制转换为 float
-    yunyingxiaolv[columns_to_average] = yunyingxiaolv[columns_to_average].astype(float)
+    # 强制转换为数值，无法转换的值保留为空
+    for col in columns_to_average:
+        yunyingxiaolv[col] = pd.to_numeric(yunyingxiaolv[col], errors='coerce').fillna(0)
 
     # 然后再 groupby + mean
-    yunyingxiaolv_means = (
-        yunyingxiaolv
-            .groupby('station_name')[columns_to_average]
-            .mean()
-            .reset_index()
-            .fillna(0)
+    yunyingxiaolv_means = pair_station_metric_means(
+        pre_operating_efficiency,
+        post_efficiency_for_mean,
+        ['pre_time_rate', 'pre_per_gun', 'pre_pue'],
+        ['post_time_rate', 'post_per_gun', 'post_pue'],
+        'efficiency'
     )
 
     # In[91]:
@@ -1089,7 +1288,7 @@ def runtechUpgradeStation():
 
     # In[94]:
 
-    xiaoxi = xiaoxi.fillna(0)
+    # 缺失订单/电量/电损指标保留为空，避免源数据缺失被误展示为真实 0。
 
     # In[95]:
 
@@ -1125,8 +1324,8 @@ def runtechUpgradeStation():
 
     # In[99]:
 
-    # 获取所有技改前站点编号
-    pre_stations = pre_xiaoxi['station_name'].unique()
+    # 获取所有技改前站点，使用映射表范围，不能只取有订单的站点。
+    pre_stations = DF_mapping['old_station_db_name'].drop_duplicates().tolist()
 
     # 创建所有站点和目标月份的笛卡尔积
     import itertools
@@ -1134,7 +1333,7 @@ def runtechUpgradeStation():
     all_combinations_pre = list(itertools.product(pre_stations, Data_pre['month']))
     df_all_pre = pd.DataFrame(all_combinations_pre, columns=['station_name', 'month'])  # 列名保持一致
 
-    # 合并真实数据，缺失的补 0
+    # 合并真实数据，缺失保留为空
     DF_pre_xiaoxi_final = pd.merge(
         df_all_pre,
         pre_xiaoxi,
@@ -1142,23 +1341,16 @@ def runtechUpgradeStation():
         how='left'
     )
 
-    # 将缺失的指标值补 0
-    for col in ['pre_electricity_loss_ratio', 'pre_post_order_count', 'pre_trans_amount']:
-        DF_pre_xiaoxi_final[col] = DF_pre_xiaoxi_final[col].fillna(0)
+    # 缺失经济指标保留为空；真实 0 来自源数据本身。
 
     # In[100]:
 
-    DF_pre_xiaoxi_final['month'] = DF_pre_xiaoxi_final['month'].astype(str)
-    DF_pre_xiaoxi_final['month'] = (
-         DF_pre_xiaoxi_final['month']
-                .str.replace('2022','2024')
-                .str.replace('2023','2025')
-    )
+    DF_pre_xiaoxi_final['month'] = shift_month_year(DF_pre_xiaoxi_final['month'])
 
     # In[101]:
 
-    # 获取所有技改后站点编号
-    post_stations = post_xiaoxi['station_name'].unique()
+    # 获取所有技改后站点，使用映射表范围，不能只取有订单的站点。
+    post_stations = DF_mapping['new_station_db_name'].drop_duplicates().tolist()
 
     # 创建所有站点和目标月份的笛卡尔积
     import itertools
@@ -1166,7 +1358,7 @@ def runtechUpgradeStation():
     all_combinations = list(itertools.product(post_stations, Data['month']))
     df_all = pd.DataFrame(all_combinations, columns=['station_name', 'month'])  # 注意列名保持一致
 
-    # 合并真实数据，缺失的补 0
+    # 合并真实数据，缺失保留为空
     DF_post_xiaoxi_final = pd.merge(
         df_all,
         post_xiaoxi,
@@ -1174,9 +1366,7 @@ def runtechUpgradeStation():
         how='left'
     )
 
-    # 将缺失的指标值补 0
-    for col in ['post_electricity_loss_ratio', 'post_post_order_count', 'post_trans_amount']:
-        DF_post_xiaoxi_final[col] = DF_post_xiaoxi_final[col].fillna(0)
+    # 缺失经济指标保留为空；真实 0 来自源数据本身。
 
     # In[102]:
 
@@ -1435,8 +1625,8 @@ def runtechUpgradeStation():
 
     # In[119]:
 
-    # 获取所有技改前站点编号
-    pre_stations = pre_DF_watt['station_name'].unique()
+    # 获取所有技改前站点，使用映射表范围，不能只取有财务月数据的站点。
+    pre_stations = DF_mapping['old_station_db_name'].drop_duplicates().tolist()
 
     # 创建所有站点和目标月份的笛卡尔积
     import itertools
@@ -1444,7 +1634,7 @@ def runtechUpgradeStation():
     all_combinations_pre = list(itertools.product(pre_stations, Data_pre['month']))
     df_all_pre = pd.DataFrame(all_combinations_pre, columns=['station_name', 'month'])  # 列名保持一致
 
-    # 合并真实数据，缺失的补 0
+    # 合并真实数据，缺失保留为空
     DF_pre_DF_watt_final = pd.merge(
         df_all_pre,
         pre_DF_watt,
@@ -1452,23 +1642,16 @@ def runtechUpgradeStation():
         how='left'
     )
 
-    # 将缺失的指标值补 0
-    for col in ['pre_benefit_per_watt']:
-        DF_pre_DF_watt_final[col] = DF_pre_DF_watt_final[col].fillna(0)
+    # 缺失单瓦效益保留为空；真实 0 来自源数据本身。
 
     # In[120]:
 
-    DF_pre_DF_watt_final['month'] = DF_pre_DF_watt_final['month'].astype(str)
-    DF_pre_DF_watt_final['month'] =  (
-         DF_pre_DF_watt_final['month']
-                .str.replace('2022','2024')
-                .str.replace('2023','2025')
-    )
+    DF_pre_DF_watt_final['month'] = shift_month_year(DF_pre_DF_watt_final['month'])
 
     # In[121]:
 
-    # 获取所有技改后站点编号
-    post_stations = post_DF_watt['station_name'].unique()
+    # 获取所有技改后站点，使用映射表范围，不能只取有财务月数据的站点。
+    post_stations = DF_mapping['new_station_db_name'].drop_duplicates().tolist()
 
     # 创建所有站点和目标月份的笛卡尔积
     import itertools
@@ -1476,7 +1659,7 @@ def runtechUpgradeStation():
     all_combinations = list(itertools.product(post_stations, Data['month']))
     df_all = pd.DataFrame(all_combinations, columns=['station_name', 'month'])  # 注意列名保持一致
 
-    # 合并真实数据，缺失的补 0
+    # 合并真实数据，缺失保留为空
     DF_post_DF_watt_final = pd.merge(
         df_all,
         post_DF_watt,
@@ -1484,9 +1667,7 @@ def runtechUpgradeStation():
         how='left'
     )
 
-    # 将缺失的指标值补 0
-    for col in ['post_benefit_per_watt']:
-        DF_post_DF_watt_final[col] = DF_post_DF_watt_final[col].fillna(0)
+    # 缺失单瓦效益保留为空；真实 0 来自源数据本身。
 
     # In[122]:
 
@@ -1552,13 +1733,26 @@ def runtechUpgradeStation():
         'post_post_order_count', 'post_trans_amount',
         'pre_benefit_per_watt', 'post_benefit_per_watt'
     ]
-    jingjixiaoyi[columns_to_average] = jingjixiaoyi[columns_to_average].astype(float)
-    jingjixiaoyi_means = (
-        jingjixiaoyi
-            .groupby('station_name')[columns_to_average]
-            .mean()  # 默认就会跳过 NaN
-            .reset_index()
-            .fillna(0)  # 如果某站点全是 NaN，就补 0
+    for col in columns_to_average:
+        jingjixiaoyi[col] = pd.to_numeric(jingjixiaoyi[col], errors='coerce').fillna(0)
+    pre_economic_means = pair_station_metric_means(
+        DF_pre_xiaoxi_final,
+        DF_post_xiaoxi_final,
+        ['pre_electricity_loss_ratio', 'pre_post_order_count', 'pre_trans_amount'],
+        ['post_electricity_loss_ratio', 'post_post_order_count', 'post_trans_amount'],
+        'economic'
+    )
+    watt_means = pair_station_metric_means(
+        DF_pre_DF_watt_final,
+        DF_post_DF_watt_final,
+        ['pre_benefit_per_watt'],
+        ['post_benefit_per_watt'],
+        'watt'
+    )
+    jingjixiaoyi_means = pre_economic_means.merge(
+        watt_means,
+        on='station_name',
+        how='outer'
     )
 
     # In[129]:
@@ -1620,8 +1814,28 @@ def runtechUpgradeStation():
 
     # In[140]:
 
-    def series_to_str(s):
-        return ", ".join(s.astype(str).tolist())
+    def format_percent_metric(value, multiplier=100):
+        if pd.isna(value):
+            return f"{0:.2f}"
+        return f"{float(value) * multiplier:.2f}"
+
+    def format_numeric_metric(value, digits=2, multiplier=1):
+        """缺失值输出 None，避免 Python 的 NaN 字符串进入 JSON。"""
+        if pd.isna(value):
+            return f"{0:.{digits}f}"
+        return f"{float(value) * multiplier:.{digits}f}"
+
+    def format_integer_metric(value):
+        if pd.isna(value):
+            return 0
+        return int(float(value))
+
+    def numeric_values(series, multiplier=1, digits=2):
+        """把 pandas 缺失值补 0，保留真实 0。"""
+        return [
+            0 if pd.isna(value) else round(float(value) * multiplier, digits)
+            for value in series
+        ]
 
     # 构建站点维度的数据
     station_data = []
@@ -1633,48 +1847,54 @@ def runtechUpgradeStation():
             "technologicalTransformation": row['charge_form'],  # 技改形式
 
             # 故障率
-            "previousFailureRate": f"{float(row['per_fault_rate']) * 100:.2f}",  # 技改前
-            "afterFailureRate": f"{float(row['post_fault_rate']) * 100:.2f}",  # 技改后
+            "previousFailureRate": format_percent_metric(row['per_fault_rate']),
+            "afterFailureRate": format_percent_metric(row['post_fault_rate']),
 
             # 停运率
-            "previousOutageRate": f"{float(row['per_outage_rate']) * 100:.2f}",  # 技改前
-            "afterOutageRate": f"{float(row['post_outage_rate']) * 100:.2f}",  # 技改后
+            "previousOutageRate": format_percent_metric(row['per_outage_rate']),
+            "afterOutageRate": format_percent_metric(row['post_outage_rate']),
 
             # 离线率
-            "previousOfflineRate": f"{float(row['per_offline_rate']) * 100:.2f}",  # 技改前
-            "afterOfflineRate": f"{float(row['post_offline_rate']) * 100:.2f}",  # 技改后
+            "previousOfflineRate": format_percent_metric(row['per_offline_rate']),
+            "afterOfflineRate": format_percent_metric(row['post_offline_rate']),
 
             # 一次成功率
-            "previousSuccessRate": f"{float(row['per_station_success_rate']) * 100:.2f}",  # 技改前
-            "afterSuccessRate": f"{float(row['post_station_success_rate']) * 100:.2f}",  # 技改后
+            "previousSuccessRate": format_percent_metric(row['per_station_success_rate']),
+            "afterSuccessRate": format_percent_metric(row['post_station_success_rate']),
 
             # 功率利用率
-            "previousPowerUtilization": f"{float(row['pre_pue']) * 100:.2f}",  # 技改前
-            "afterPowerUtilization": f"{float(row['post_pue']) * 100:.2f}",  # 技改后
+            "previousPowerUtilization": format_percent_metric(row['pre_pue']),
+            # 技改后功率利用率来自 dp_capacity_utilization_rate，已是百分数
+            "afterPowerUtilization": format_percent_metric(row['post_pue'], multiplier=1),
+
+            "previousQualityDataMissing": bool(row.get('pre_quality_data_missing', False)),
+            "afterQualityDataMissing": bool(row.get('post_quality_data_missing', False)),
+            "previousEfficiencyDataMissing": bool(row.get('pre_efficiency_data_missing', False)),
+            "afterEfficiencyDataMissing": bool(row.get('post_efficiency_data_missing', False)),
 
             # 时长利用率
-            "previousDurationUtilization": f"{float(row['pre_time_rate']) * 100 :.2f}",  # 技改前
-            "afterDurationUtilization": f"{float(row['post_time_rate']) * 100 :.2f}",  # 技改后
+            "previousDurationUtilization": format_numeric_metric(row['pre_time_rate'], multiplier=100),  # 技改前
+            "afterDurationUtilization": format_numeric_metric(row['post_time_rate'], multiplier=100),  # 技改后
 
             # 单枪日均充电量
-            "previousChargeCapacity": f"{float(row['pre_per_gun']):.2f}",  # 技改前
-            "afterChargeCapacity": f"{float(row['post_per_gun']):.2f}",  # 技改后
+            "previousChargeCapacity": format_numeric_metric(row['pre_per_gun']),  # 技改前
+            "afterChargeCapacity": format_numeric_metric(row['post_per_gun']),  # 技改后
 
             # 订单数量
-            "previousOrderQuantity": int(float(row['pre_post_order_count'])),  # 技改前
-            "afterOrderQuantity": int(float(row['post_post_order_count'])),  # 技改后
+            "previousOrderQuantity": format_integer_metric(row['pre_post_order_count']),  # 技改前
+            "afterOrderQuantity": format_integer_metric(row['post_post_order_count']),  # 技改后
 
             # 电量消耗
-            "previousPowerConsumption": f"{float(row['pre_electricity_loss_ratio']) * 100:.2f}",  # 技改前
-            "afterPowerConsumption": f"{float(row['post_electricity_loss_ratio']) * 100:.2f}",  # 技改后
+            "previousPowerConsumption": format_numeric_metric(row['pre_electricity_loss_ratio'], multiplier=100),  # 技改前
+            "afterPowerConsumption": format_numeric_metric(row['post_electricity_loss_ratio'], multiplier=100),  # 技改后
 
             # 充电收入
-            "previousChargingRevenue": f"{float(row['pre_trans_amount']) :.2f}",  # 技改前
-            "afterChargingRevenue": f"{float(row['post_trans_amount']) :.2f}",  # 技改后
+            "previousChargingRevenue": format_numeric_metric(row['pre_trans_amount']),  # 技改前
+            "afterChargingRevenue": format_numeric_metric(row['post_trans_amount']),  # 技改后
 
             # 单瓦效益
-            "previousSingleWattBenefits": f"{float(row['pre_benefit_per_watt']) :.2f}",  # 技改前
-            "afterSingleWattBenefits": f"{float(row['post_benefit_per_watt']) :.2f}"  # 技改后
+            "previousSingleWattBenefits": format_numeric_metric(row['pre_benefit_per_watt']),  # 技改前
+            "afterSingleWattBenefits": format_numeric_metric(row['post_benefit_per_watt'])  # 技改后
         })
 
     # 构建最终结构（直接扁平化 tableData）
@@ -1698,7 +1918,7 @@ def runtechUpgradeStation():
         'update_time': '更新日期'
     }
     DF = pd.DataFrame([{
-        'result': json.dumps(result, ensure_ascii=False),
+        'result': safe_json_dumps(result),
         'update_time': M
     }])
 
@@ -1884,7 +2104,7 @@ def runtechUpgradeStation():
         'update_time': '更新日期'
     }
     DF = pd.DataFrame([{
-        'result': json.dumps(duibi, ensure_ascii=False),
+        'result': safe_json_dumps(duibi),
         'update_time': M
     }])
 
@@ -1984,29 +2204,29 @@ def runtechUpgradeStation():
             {
                 "title": "故障率(%)",
                 "content": [
-                    {"name": "技改前（均值）", "value": f"{float(row_mean['per_fault_rate']) * 100:.2f}"},
-                    {"name": "技改后（均值）", "value": f"{float(row_mean['post_fault_rate']) * 100:.2f}"},
+                    {"name": "技改前（均值）", "value": format_percent_metric(row_mean['per_fault_rate'])},
+                    {"name": "技改后（均值）", "value": format_percent_metric(row_mean['post_fault_rate'])},
                 ]
             },
             {
                 "title": "停运率(%)",
                 "content": [
-                    {"name": "技改前（均值）", "value": f"{float(row_mean['per_outage_rate']) * 100:.2f}"},
-                    {"name": "技改后（均值）", "value": f"{float(row_mean['post_outage_rate']) * 100:.2f}"},
+                    {"name": "技改前（均值）", "value": format_percent_metric(row_mean['per_outage_rate'])},
+                    {"name": "技改后（均值）", "value": format_percent_metric(row_mean['post_outage_rate'])},
                 ]
             },
             {
                 "title": "离线率(%)",
                 "content": [
-                    {"name": "技改前（均值）", "value": f"{float(row_mean['per_offline_rate']) * 100:.2f}"},
-                    {"name": "技改后（均值）", "value": f"{float(row_mean['post_offline_rate']) * 100:.2f}"},
+                    {"name": "技改前（均值）", "value": format_percent_metric(row_mean['per_offline_rate'])},
+                    {"name": "技改后（均值）", "value": format_percent_metric(row_mean['post_offline_rate'])},
                 ]
             },
             {
                 "title": "一次成功率(%)",
                 "content": [
-                    {"name": "技改前（均值）", "value": f"{float(row_mean['per_station_success_rate']) * 100:.2f}"},
-                    {"name": "技改后（均值）", "value": f"{float(row_mean['post_station_success_rate']) * 100:.2f}"},
+                    {"name": "技改前（均值）", "value": format_percent_metric(row_mean['per_station_success_rate'])},
+                    {"name": "技改后（均值）", "value": format_percent_metric(row_mean['post_station_success_rate'])},
                 ]
             }
         ]
@@ -2016,17 +2236,14 @@ def runtechUpgradeStation():
 
         for key, (pre_col, post_col) in indicators.items():
             # 转换为浮点数并填充缺失值
-            pre_values = df_detail[pre_col].fillna(0).apply(float).tolist()
-            post_values = df_detail[post_col].fillna(0).apply(float).tolist()
+            pre_values = df_detail[pre_col].tolist()
+            post_values = df_detail[post_col].tolist()
 
             # 如果值在0~1之间，则乘100
-            if max(pre_values + post_values) <= 1:
-                pre_values = [v * 100 for v in pre_values]
-                post_values = [v * 100 for v in post_values]
-
-            # 保留两位小数
-            pre_values = [round(v, 2) for v in pre_values]
-            post_values = [round(v, 2) for v in post_values]
+            valid_values = [float(v) for v in pre_values + post_values if not pd.isna(v)]
+            multiplier = 100 if valid_values and max(valid_values) <= 1 else 1
+            pre_values = numeric_values(pre_values, multiplier)
+            post_values = numeric_values(post_values, multiplier)
 
             data_list.append({
                 "radio": key,
@@ -2056,7 +2273,7 @@ def runtechUpgradeStation():
         'update_time': '更新日期'
     }
     DF = pd.DataFrame([{
-        'result': json.dumps(equipment_quality, ensure_ascii=False),
+        'result': safe_json_dumps(equipment_quality),
         'update_time': M
     }])
 
@@ -2109,19 +2326,21 @@ def runtechUpgradeStation():
         # tableData 均值
         tableData = []
         for key, (pre_col, post_col) in indicators.items():
-            pre_val = row_mean.get(pre_col, 0)
-            post_val = row_mean.get(post_col, 0)
+            pre_val = row_mean.get(pre_col, pd.NA)
+            post_val = row_mean.get(post_col, pd.NA)
 
-            # 如果是百分比指标且 <=1 则乘100
-            if key in ["功率利用率(%)", "时长利用率(%)"] and max(pre_val, post_val) <= 1:
+            # 技改后功率利用率来自数据库，已经是百分数；技改前及技改后时长利用率仍按旧逻辑处理。
+            if key == "功率利用率(%)" and not pd.isna(pre_val) and abs(pre_val) <= 1:
+                pre_val *= 100
+            if key == "时长利用率(%)" and not pd.isna(pre_val) and not pd.isna(post_val) and max(abs(pre_val), abs(post_val)) <= 1:
                 pre_val *= 100
                 post_val *= 100
 
             tableData.append({
                 "title": key,
                 "content": [
-                    {"name": "技改前（均值）", "value": f"{pre_val:.2f}"},
-                    {"name": "技改后（均值）", "value": f"{post_val:.2f}"},
+                    {"name": "技改前（均值）", "value": format_numeric_metric(pre_val)},
+                    {"name": "技改后（均值）", "value": format_numeric_metric(post_val)},
                 ]
             })
 
@@ -2130,17 +2349,19 @@ def runtechUpgradeStation():
 
         for key, (pre_col, post_col) in indicators.items():
             # 安全取值并填充缺失
-            pre_values = df_detail.get(pre_col, pd.Series([0] * len(df_detail))).fillna(0).apply(float).tolist()
-            post_values = df_detail.get(post_col, pd.Series([0] * len(df_detail))).fillna(0).apply(float).tolist()
+            pre_values = df_detail.get(pre_col, pd.Series([pd.NA] * len(df_detail))).tolist()
+            post_values = df_detail.get(post_col, pd.Series([pd.NA] * len(df_detail))).tolist()
 
-            # 百分比指标统一乘100
-            if key in ["功率利用率(%)", "时长利用率(%)"] and max(pre_values + post_values) <= 1:
-                pre_values = [v * 100 for v in pre_values]
-                post_values = [v * 100 for v in post_values]
-
-            # 保留两位小数
-            pre_values = [round(v, 2) for v in pre_values]
-            post_values = [round(v, 2) for v in post_values]
+            # 技改后功率利用率已经是百分数；技改前功率利用率保留原有比例换算。
+            valid_values = [float(v) for v in pre_values + post_values if not pd.isna(v)]
+            if key == "功率利用率(%)":
+                pre_multiplier, post_multiplier = 100, 1
+            elif key == "时长利用率(%)" and valid_values and max(abs(v) for v in valid_values) <= 1:
+                pre_multiplier = post_multiplier = 100
+            else:
+                pre_multiplier = post_multiplier = 1
+            pre_values = numeric_values(pre_values, pre_multiplier)
+            post_values = numeric_values(post_values, post_multiplier)
 
             data_list.append({
                 "radio": key,
@@ -2166,7 +2387,7 @@ def runtechUpgradeStation():
         'update_time': '更新日期'
     }
     DF = pd.DataFrame([{
-        'result': json.dumps(operating_efficiency, ensure_ascii=False),
+        'result': safe_json_dumps(operating_efficiency),
         'update_time': M
     }])
 
@@ -2216,29 +2437,33 @@ def runtechUpgradeStation():
         # tableData 均值
         tableData = []
         for key, (pre_col, post_col) in indicators.items():
-            pre_val = row_mean.get(pre_col, 0)
-            post_val = row_mean.get(post_col, 0)
+            pre_val = row_mean.get(pre_col, pd.NA)
+            post_val = row_mean.get(post_col, pd.NA)
 
             # 百分比指标处理
-            if key == "电损(%)" and max(pre_val, post_val) <= 1:
+            valid_values = [float(v) for v in [pre_val, post_val] if not pd.isna(v)]
+            if key == "电损(%)" and valid_values and max(valid_values) <= 1:
                 pre_val *= 100
                 post_val *= 100
 
             # 整数指标转换
             if key == "订单数量(单)":
-                pre_val = int(pre_val)
-                post_val = int(post_val)
+                pre_output = format_integer_metric(pre_val)
+                post_output = format_integer_metric(post_val)
+            else:
+                pre_output = format_numeric_metric(pre_val)
+                post_output = format_numeric_metric(post_val)
 
             tableData.append({
                 "title": key,
                 "content": [
                     {
                         "name": "技改前（均值）",
-                        "value": f"{pre_val:.2f}" if isinstance(pre_val, float) else f"{pre_val}"
+                        "value": pre_output
                     },
                     {
                         "name": "技改后（均值）",
-                        "value": f"{post_val:.2f}" if isinstance(post_val, float) else f"{post_val}"
+                        "value": post_output
                     },
                 ]
             })
@@ -2248,17 +2473,14 @@ def runtechUpgradeStation():
 
         for key, (pre_col, post_col) in indicators.items():
             # 安全获取列
-            pre_values = df_detail.get(pre_col, pd.Series([0] * len(df_detail))).fillna(0).apply(float).tolist()
-            post_values = df_detail.get(post_col, pd.Series([0] * len(df_detail))).fillna(0).apply(float).tolist()
+            pre_values = df_detail.get(pre_col, pd.Series([pd.NA] * len(df_detail))).tolist()
+            post_values = df_detail.get(post_col, pd.Series([pd.NA] * len(df_detail))).tolist()
 
             # 百分比指标统一乘100
-            if key == "电损(%)" and max(pre_values + post_values) <= 1:
-                pre_values = [v * 100 for v in pre_values]
-                post_values = [v * 100 for v in post_values]
-
-            # 保留两位小数
-            pre_values = [round(v, 2) for v in pre_values]
-            post_values = [round(v, 2) for v in post_values]
+            valid_values = [float(v) for v in pre_values + post_values if not pd.isna(v)]
+            multiplier = 100 if key == "电损(%)" and valid_values and max(valid_values) <= 1 else 1
+            pre_values = numeric_values(pre_values, multiplier)
+            post_values = numeric_values(post_values, multiplier)
 
             data_list.append({
                 "radio": key,
@@ -2284,7 +2506,7 @@ def runtechUpgradeStation():
         'update_time': '更新日期'
     }
     DF = pd.DataFrame([{
-        'result': json.dumps(economic_benefits, ensure_ascii=False),
+        'result': safe_json_dumps(economic_benefits),
         'update_time': M
     }])
 

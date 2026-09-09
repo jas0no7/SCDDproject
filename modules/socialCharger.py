@@ -998,13 +998,15 @@ def runsocialCharger():
         R6.loc[R6['时间'].str.startswith(str(year)), '平台功率利用率'],
         errors='coerce'
     ).replace([np.inf, -np.inf], np.nan)
+    # 顶部“本年功率利用率”定义为截至统计月的各月平台功率利用率算术平均。
+    # 它不是站点记录均值，也不是按额定功率加权后的整体利用率。
     year_pue_mean = current_year_pue.mean()
     x2 = round(float(year_pue_mean), 2) if has_current_month_pue and pd.notna(year_pue_mean) else 0.0
 
     # In[70]:
 
 
-    DATA.append(x2)  # 单位：把
+    DATA.append(x2)  # 单位：%，截至统计月的平台月度均值
     DATA
 
     # In[71]:
