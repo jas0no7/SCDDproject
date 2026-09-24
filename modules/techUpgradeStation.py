@@ -1,5 +1,5 @@
 ﻿from logs.log_decorator import log_execution
-from modules.config import SQL,import_data_with_cursor,Statistical_Time
+from modules.config import SQL, import_data_with_cursor, Statistical_Time, sanitize_database_value
 
 
 
@@ -13,7 +13,6 @@ def runtechUpgradeStation():
     import pandas as pd
     from datetime import datetime
     import json
-    import math
     from pandas.tseries.offsets import MonthBegin
     import calendar
     from dateutil.relativedelta import relativedelta
@@ -25,21 +24,8 @@ def runtechUpgradeStation():
     # In[6]:
 
     def clean_json_value(value):
-        """把 pandas/numpy 缺失值清成标准 JSON null。"""
-        if isinstance(value, dict):
-            return {key: clean_json_value(val) for key, val in value.items()}
-        if isinstance(value, (list, tuple)):
-            return [clean_json_value(item) for item in value]
-        if pd.isna(value):
-            return None
-        if isinstance(value, float) and not math.isfinite(value):
-            return None
-        if hasattr(value, 'item'):
-            try:
-                return clean_json_value(value.item())
-            except ValueError:
-                return value
-        return value
+        """把 JSON 中的 NaN、inf 和 -inf 统一转换为 0。"""
+        return sanitize_database_value(value)
 
     def safe_json_dumps(value):
         return json.dumps(clean_json_value(value), ensure_ascii=False, allow_nan=False)

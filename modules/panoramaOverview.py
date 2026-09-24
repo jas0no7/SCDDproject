@@ -1,6 +1,6 @@
 from logs.log_decorator import log_execution
 from loguru import logger
-from modules.config import SQL, import_data_with_cursor, Statistical_Time
+from modules.config import SQL, import_data_with_cursor, Statistical_Time, sanitize_database_value
 
 
 @log_execution
@@ -1275,9 +1275,12 @@ def runpanoramaOverview():
 
     df.rename(columns={'pue': '公司功率利用率', 'avg_power_utilization': '全省站点功率利用率平均水平'}, inplace=True)
 
-    # 图表列表中使用 None 表示缺失值，避免入库 JSON 出现非标准的 NaN。
+    # 入库前将缺失值和非有限数值统一写为 0。
     for col in ['公司功率利用率', '全省站点功率利用率平均水平']:
-        values = [None if pd.isna(value) else round(float(value), 2) for value in df[col]]
+        values = [
+            0 if pd.isna(value) or not np.isfinite(float(value)) else round(float(value), 2)
+            for value in df[col]
+        ]
         df[col] = pd.Series(values, index=df.index, dtype=object)
 
     # In[617]:
@@ -1692,13 +1695,7 @@ def runpanoramaOverview():
         return str(o)
 
     def sanitize_json_value(value):
-        if isinstance(value, dict):
-            return {key: sanitize_json_value(item) for key, item in value.items()}
-        if isinstance(value, list):
-            return [sanitize_json_value(item) for item in value]
-        if isinstance(value, (float, np.floating)) and not np.isfinite(float(value)):
-            return None
-        return value
+        return sanitize_database_value(value)
 
     # DF = pd.DataFrame(columns=['targetData'], data=[json.dumps(dict1, ensure_ascii=False)])
     DF = pd.DataFrame(

@@ -10,6 +10,7 @@ import calendar
 from dateutil.relativedelta import relativedelta
 from sklearn.preprocessing import StandardScaler
 from sklearn.preprocessing import MinMaxScaler
+from decimal import Decimal
 import re
 
 
@@ -83,11 +84,69 @@ def Statistical_Time():
 
     return M, previous_month_str, year, last_year, last_year_month_str, P_M
 
+
+def sanitize_database_value(value):
+    """将待入库数据中的 NaN、inf 和 -inf 统一转换为 0。
+
+    计算结果既可能以数值形式存在，也可能已经被编码成 JSON 字符串，
+    因此这里同时处理标量、列表/字典和 JSON 文本，作为所有入库脚本的
+    最后一层保护。
+    """
+    if isinstance(value, dict):
+        return {key: sanitize_database_value(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple, set)):
+        return [sanitize_database_value(item) for item in value]
+    if isinstance(value, np.ndarray):
+        return [sanitize_database_value(item) for item in value.tolist()]
+    if isinstance(value, Decimal):
+        return 0 if not value.is_finite() else value
+    if isinstance(value, (float, np.floating)):
+        if not np.isfinite(value):
+            return 0
+        return value.item() if hasattr(value, 'item') else value
+    if isinstance(value, (int, np.integer)):
+        return value.item() if hasattr(value, 'item') else value
+    if isinstance(value, str):
+        stripped = value.strip()
+        if stripped.lower() in {
+            'nan', '+nan', '-nan', 'inf', '+inf', '-inf',
+            'infinity', '+infinity', '-infinity'
+        }:
+            return 0
+        # 已经编码的 JSON 也要清理其中的 NaN/Infinity。
+        if stripped[:1] in {'[', '{'} and stripped[-1:] in {']', '}'}:
+            try:
+                parsed = json.loads(stripped, parse_constant=lambda _value: 0)
+            except (TypeError, ValueError, json.JSONDecodeError):
+                return value
+            return json.dumps(
+                sanitize_database_value(parsed),
+                ensure_ascii=False,
+                allow_nan=False
+            )
+        return value
+    if value is None:
+        return None
+    if value is pd.NaT or (
+        isinstance(value, (pd.Timestamp, np.datetime64)) and pd.isna(value)
+    ):
+        return value
+    try:
+        missing = pd.isna(value)
+    except (TypeError, ValueError):
+        missing = False
+    return 0 if isinstance(missing, (bool, np.bool_)) and bool(missing) else value
+
+
 def import_data_with_cursor(df, table_name, table_comment=None, column_comments=None,
                             append_data=False, update_columns=True, longtext_columns=None, primary_keys=None):
     """
     将 DataFrame 数据导入到 MySQL 表中，确保主键能正确更新为新列。
     """
+    # 所有计算脚本统一在入库边界清洗非有限值，避免 NaN/Infinity 进入数值列或 JSON 文本。
+    df = df.copy()
+    df = df.apply(lambda column: column.map(sanitize_database_value))
+
     # 初始化数据库连接
     # conn = pymysql.connect(
     #     host='192.168.0.215',
@@ -361,7 +420,8 @@ def import_data_with_cursor(df, table_name, table_comment=None, column_comments=
         for col in longtext_columns:
             if col in df.columns:
                 df[col] = df[col].apply(
-                    lambda x: json.dumps(x, ensure_ascii=False) if isinstance(x, (list, dict)) else str(x)
+                    lambda x: json.dumps(x, ensure_ascii=False, allow_nan=False)
+                    if isinstance(x, (list, dict)) else str(x)
                 )
 
         # 对齐表列和数据列（确保插入的列与表结构一致）
@@ -385,7 +445,7 @@ def import_data_with_cursor(df, table_name, table_comment=None, column_comments=
                     processed_row.append('')
                 # 列表/字典类型（未被长文本处理的兜底）
                 elif isinstance(value, (list, dict)):
-                    processed_row.append(json.dumps(value, ensure_ascii=False))
+                    processed_row.append(json.dumps(value, ensure_ascii=False, allow_nan=False))
                 # NULL值（MySQL用None表示NULL）
                 elif pd.isna(value):
                     processed_row.append(None)

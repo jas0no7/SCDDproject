@@ -1,6 +1,6 @@
 from logs.log_decorator import log_execution
 from loguru import logger
-from modules.config import SQL,import_data_with_cursor,Statistical_Time
+from modules.config import SQL, import_data_with_cursor, Statistical_Time, sanitize_database_value
 
 @log_execution
 def runsocialCharger():
@@ -2830,6 +2830,12 @@ def runsocialCharger():
             station.get('merchant_name') if pd.notna(station.get('merchant_name')) else '',
             rule_text
         ))
+
+    # 该处使用独立的 executemany 入库，同样清洗非有限数值。
+    profit_sharing_rows = [
+        tuple(sanitize_database_value(value) for value in row)
+        for row in profit_sharing_rows
+    ]
 
     profit_conn = pymysql.connect(
         host='10.177.58.100',

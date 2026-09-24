@@ -3593,6 +3593,22 @@ def runkeyStationInternalCompetition():
 
     # In[436]:
 
+    # 先读取参与使用效率计算的站点清单。即使当月没有功率利用率数据，也要用这份站点清单生成零值记录。
+    sql_station = """
+    select
+        cs.station_no,
+        cs.station_name,
+        cs.station_category,
+        (IFNULL(cs.dc_charge_point_count, 0) + IFNULL(cs.ac_charge_point_count, 0)) as point_count,
+        cs.operation_status
+    from charging_station cs
+    LEFT JOIN rec_merchant rm ON cs.property_owner_merhant_id = rm.merchant_id
+    where cs.merchant_nature = '电动公司'
+        and cs.operation_status in ('投运', '停运')
+    """
+    DF_station = SQL(sql_station)
+    DF_station.loc[DF_station['station_category'] == '高速', 'station_category'] = '高速公共'
+
     sql = """
         SELECT
           pue.*,
@@ -3607,18 +3623,32 @@ def runkeyStationInternalCompetition():
     DF_pue_2 = SQL(sql)
 
     # 容量利用率表按月保存数据；同站同月重复时保留最后写入的一条。
-    DF_pue_2 = DF_pue_2[DF_pue_2['month'].astype(str) == M].copy()
-    DF_pue_2 = (
-        DF_pue_2.sort_values('id')
-        .drop_duplicates(subset=['station_code', 'month'], keep='last')
-        .rename(columns={
-            'station_code': 'station_no',
-            'capacity_utilization_rate': 'pue'
-        })
-    )
-    DF_pue_2.loc[DF_pue_2['station_category'] == '高速', 'station_category'] = '高速公共'
-    # capacity_utilization_rate 已经是百分数（例如 10.87 表示 10.87%），直接使用。
-    DF_pue_2['pue'] = pd.to_numeric(DF_pue_2['pue'], errors='coerce').fillna(0)
+    if not DF_pue_2.empty:
+        DF_pue_2 = DF_pue_2[DF_pue_2['month'].astype(str) == M].copy()
+
+    if DF_pue_2.empty:
+        # 当月没有任何功率利用率记录时，保留全部有效站点，并将功率利用率设为0。
+        # 这样下游排名、图表和存库仍会为每个站点生成一行数据。
+        DF_pue_2 = DF_station[['station_no', 'station_name', 'station_category']].copy()
+        DF_pue_2 = DF_pue_2[
+            DF_pue_2['station_category'].isin(['高速公共', '城市公共', '重卡专用'])
+            & DF_pue_2['station_no'].notna()
+        ].drop_duplicates(subset=['station_no'], keep='last')
+        DF_pue_2['month'] = M
+        DF_pue_2['pue'] = 0.0
+        logger.warning(f"{M}月没有功率利用率数据，已按站点清单将功率利用率补为0")
+    else:
+        DF_pue_2 = (
+            DF_pue_2.sort_values('id')
+            .drop_duplicates(subset=['station_code', 'month'], keep='last')
+            .rename(columns={
+                'station_code': 'station_no',
+                'capacity_utilization_rate': 'pue'
+            })
+        )
+        DF_pue_2.loc[DF_pue_2['station_category'] == '高速', 'station_category'] = '高速公共'
+        # capacity_utilization_rate 已经是百分数（例如 10.87 表示 10.87%），直接使用。
+        DF_pue_2['pue'] = pd.to_numeric(DF_pue_2['pue'], errors='coerce').fillna(0)
 
     # In[443]:
 
@@ -3633,19 +3663,6 @@ def runkeyStationInternalCompetition():
     # In[445]:
 
     # 分别提取两个表的数据
-    sql_station = f"""
-    select 
-        cs.station_no,
-        cs.station_name,
-        cs.station_category,
-        (IFNULL(cs.dc_charge_point_count, 0) + IFNULL(cs.ac_charge_point_count, 0)) as point_count,
-        cs.operation_status 
-    from charging_station cs
-    LEFT JOIN rec_merchant rm ON cs.property_owner_merhant_id = rm.merchant_id
-    where cs.merchant_nature = '电动公司'
-        and cs.operation_status in ('投运', '停运')
-    """
-
     sql_orders = f"""
     select 
         charging_station_no,
@@ -3655,9 +3672,7 @@ def runkeyStationInternalCompetition():
     """
 
     # 分别获取DataFrame
-    DF_station = SQL(sql_station)
     DF_orders = SQL(sql_orders)
-    DF_station.loc[DF_station['station_category'] == '高速', 'station_category'] = '高速公共'
 
     # 在Notebook中进行左连接
     DF_time = DF_station.merge(
@@ -4203,14 +4218,18 @@ def runkeyStationInternalCompetition():
         'month': '分析年月'
     }
 
-    # 执行导入（覆盖数据，更新列结构）
-    import_data_with_cursor(
-        df=Database_Table8,
-        table_name="dp_KeyStation_Internal_competitiveness_use",
-        table_comment=table_comment,
-        column_comments=column_comments,
-        primary_keys=['siteNum', 'month']
-    )
+    # 空站点清单时不要调用覆盖导入；import_data_with_cursor 会先清空旧表，空 DataFrame 会导致表被清空。
+    if Database_Table8.empty:
+        logger.error(f"{M}月没有可用于使用效率表的有效站点，跳过覆盖导入以避免清空目标表")
+    else:
+        # 执行导入（覆盖数据，更新列结构）
+        import_data_with_cursor(
+            df=Database_Table8,
+            table_name="dp_KeyStation_Internal_competitiveness_use",
+            table_comment=table_comment,
+            column_comments=column_comments,
+            primary_keys=['siteNum', 'month']
+        )
 
     # 运营画像与顶部站点数量使用同一份站点清单。
     # 口径与 cityPublic_typeMonitoring.py 一致：投运/停运、报告月末前投运、站点编号去重。

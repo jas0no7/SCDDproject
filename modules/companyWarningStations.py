@@ -935,7 +935,7 @@ def runcompanyWarningStations():
         'siteTypeFilters': '站点类型筛选',
         'month': '分析年月'
     }
-    Database_Table1 = Database_Table1.replace([np.inf, -np.inf], 0).replace({np.nan: None})
+    Database_Table1 = Database_Table1.replace([np.inf, -np.inf, np.nan], 0)
 
     # 执行导入（覆盖数据，更新列结构）
     import_data_with_cursor(
