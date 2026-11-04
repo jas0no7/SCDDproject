@@ -1,6 +1,6 @@
 from logs.log_decorator import log_execution
 from loguru import logger
-from modules.config import SQL,import_data_with_cursor,Statistical_Time
+from modules.config import SQL, import_data_with_cursor, Statistical_Time, dumps_json
 
 
 @log_execution
@@ -1985,7 +1985,7 @@ def runcompanyWarningStations():
         result_list.append(result_dict)
 
     Database_Table3 = pd.DataFrame(result_list)
-    Database_Table3['dimensionData'] = Database_Table3['dimensionData'].apply(json.dumps, ensure_ascii=False)
+    Database_Table3['dimensionData'] = Database_Table3['dimensionData'].apply(dumps_json)
     Database_Table3.head(2)
 
     # ### 数据存储

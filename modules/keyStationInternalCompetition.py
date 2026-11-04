@@ -1,6 +1,6 @@
 from logs.log_decorator import log_execution
 from loguru import logger
-from modules.config import SQL, import_data_with_cursor, Statistical_Time
+from modules.config import SQL, import_data_with_cursor, Statistical_Time, dumps_json
 
 
 @log_execution
@@ -782,8 +782,8 @@ def runkeyStationInternalCompetition():
         }
 
         # 将 pieChartData1 和 pieChartData2 转换为 JSON 字符串
-        site_data["pieChartData1"] = json.dumps(site_data["pieChartData1"], ensure_ascii=False)
-        site_data["pieChartData2"] = json.dumps(site_data["pieChartData2"], ensure_ascii=False)
+        site_data["pieChartData1"] = dumps_json(site_data["pieChartData1"], ensure_ascii=False)
+        site_data["pieChartData2"] = dumps_json(site_data["pieChartData2"], ensure_ascii=False)
 
         data_list.append(site_data)
 
@@ -1256,8 +1256,8 @@ def runkeyStationInternalCompetition():
                 "month": M
             })
             # 将字典转换为 JSON 字符串
-            results[-1]["barChartData"] = json.dumps(results[-1]["barChartData"], ensure_ascii=False)
-            results[-1]["profitPoint"] = json.dumps(results[-1]["profitPoint"], ensure_ascii=False)
+            results[-1]["barChartData"] = dumps_json(results[-1]["barChartData"], ensure_ascii=False)
+            results[-1]["profitPoint"] = dumps_json(results[-1]["profitPoint"], ensure_ascii=False)
             continue  # 跳过后续处理
 
         # 判断2：回本进度>100
@@ -1278,8 +1278,8 @@ def runkeyStationInternalCompetition():
                 "month": M
             })
             # 将字典转换为 JSON 字符串
-            results[-1]["barChartData"] = json.dumps(results[-1]["barChartData"], ensure_ascii=False)
-            results[-1]["profitPoint"] = json.dumps(results[-1]["profitPoint"], ensure_ascii=False)
+            results[-1]["barChartData"] = dumps_json(results[-1]["barChartData"], ensure_ascii=False)
+            results[-1]["profitPoint"] = dumps_json(results[-1]["profitPoint"], ensure_ascii=False)
             continue  # 跳过后续处理
 
         # 获取最新月份数据（target_months最后一个月份对应的数据）
@@ -1303,8 +1303,8 @@ def runkeyStationInternalCompetition():
                 "month": M
             })
             # 将字典转换为 JSON 字符串
-            results[-1]["barChartData"] = json.dumps(results[-1]["barChartData"], ensure_ascii=False)
-            results[-1]["profitPoint"] = json.dumps(results[-1]["profitPoint"], ensure_ascii=False)
+            results[-1]["barChartData"] = dumps_json(results[-1]["barChartData"], ensure_ascii=False)
+            results[-1]["profitPoint"] = dumps_json(results[-1]["profitPoint"], ensure_ascii=False)
             continue  # 跳过后续处理
 
         # 判断4：balance<0且静态资金回本进度≥100
@@ -1325,8 +1325,8 @@ def runkeyStationInternalCompetition():
                 "month": M
             })
             # 将字典转换为 JSON 字符串
-            results[-1]["barChartData"] = json.dumps(results[-1]["barChartData"], ensure_ascii=False)
-            results[-1]["profitPoint"] = json.dumps(results[-1]["profitPoint"], ensure_ascii=False)
+            results[-1]["barChartData"] = dumps_json(results[-1]["barChartData"], ensure_ascii=False)
+            results[-1]["profitPoint"] = dumps_json(results[-1]["profitPoint"], ensure_ascii=False)
             continue  # 跳过后续处理
 
         # 判断5：balance<0且静态资金回本进度<100
@@ -1430,8 +1430,8 @@ def runkeyStationInternalCompetition():
 
             results.append({
                 "siteNum": site_num,
-                "barChartData": json.dumps(bar_chart_data, ensure_ascii=False),
-                "profitPoint": json.dumps(profit_point_data, ensure_ascii=False),
+                "barChartData": dumps_json(bar_chart_data, ensure_ascii=False),
+                "profitPoint": dumps_json(profit_point_data, ensure_ascii=False),
                 "month": M
             })
             continue
@@ -1521,8 +1521,8 @@ def runkeyStationInternalCompetition():
 
             results.append({
                 "siteNum": site_num,
-                "barChartData": json.dumps(bar_chart_data, ensure_ascii=False),
-                "profitPoint": json.dumps(profit_point_data, ensure_ascii=False),
+                "barChartData": dumps_json(bar_chart_data, ensure_ascii=False),
+                "profitPoint": dumps_json(profit_point_data, ensure_ascii=False),
                 "month": M
             })
 
@@ -2160,8 +2160,8 @@ def runkeyStationInternalCompetition():
     siteTypeFilters = list(basic3_output['station_category'].dropna().unique())
 
     # 将筛选器列表转换为 JSON 字符串
-    siteNameFilters_json = json.dumps(siteNameFilters, ensure_ascii=False)
-    siteTypeFilters_json = json.dumps(siteTypeFilters, ensure_ascii=False)
+    siteNameFilters_json = dumps_json(siteNameFilters, ensure_ascii=False)
+    siteTypeFilters_json = dumps_json(siteTypeFilters, ensure_ascii=False)
 
     # 按静态资金回本进度降序排序
     basic3_sorted = basic3_output.sort_values('静态资金回本进度', ascending=False)
@@ -2590,7 +2590,7 @@ def runkeyStationInternalCompetition():
     }
 
     # 将options转换为JSON字符串
-    options_json = json.dumps(["桩数量", "单桩功率"], ensure_ascii=False)
+    options_json = dumps_json(["桩数量", "单桩功率"], ensure_ascii=False)
 
     # 生成最终数据
     final_data = []
@@ -2599,7 +2599,7 @@ def runkeyStationInternalCompetition():
     for station_no in df_build_1['station_no']:
         bar_chart_data = generate_bar_chart_data(df_build_1, station_no, "df_build_1", avg_dict)
         # 将BarChartData转换为JSON字符串
-        bar_chart_data_json = json.dumps(bar_chart_data, ensure_ascii=False)
+        bar_chart_data_json = dumps_json(bar_chart_data, ensure_ascii=False)
 
         final_data.append({
             "siteNum": station_no,
@@ -2612,7 +2612,7 @@ def runkeyStationInternalCompetition():
     for station_no in df_build_2['station_no']:
         bar_chart_data = generate_bar_chart_data(df_build_2, station_no, "df_build_2", avg_dict)
         # 将BarChartData转换为JSON字符串
-        bar_chart_data_json = json.dumps(bar_chart_data, ensure_ascii=False)
+        bar_chart_data_json = dumps_json(bar_chart_data, ensure_ascii=False)
 
         final_data.append({
             "siteNum": station_no,
@@ -2625,7 +2625,7 @@ def runkeyStationInternalCompetition():
     for station_no in df_build_3['station_no']:
         bar_chart_data = generate_bar_chart_data(df_build_3, station_no, "df_build_3", avg_dict)
         # 将BarChartData转换为JSON字符串
-        bar_chart_data_json = json.dumps(bar_chart_data, ensure_ascii=False)
+        bar_chart_data_json = dumps_json(bar_chart_data, ensure_ascii=False)
 
         final_data.append({
             "siteNum": station_no,
@@ -2941,7 +2941,7 @@ def runkeyStationInternalCompetition():
     }
 
     # 将options转换为JSON字符串
-    options_json = json.dumps(["经济效益得分", "静态投资回收进度", "设备折旧进度"], ensure_ascii=False)
+    options_json = dumps_json(["经济效益得分", "静态投资回收进度", "设备折旧进度"], ensure_ascii=False)
 
     # 生成最终数据
     final_data = []
@@ -2952,7 +2952,7 @@ def runkeyStationInternalCompetition():
         final_data.append({
             "siteNum": station_no,
             "options": options_json,  # 使用转换后的JSON字符串
-            "BarChartData": json.dumps(bar_chart_data, ensure_ascii=False),  # 转换为JSON字符串并保留中文字符
+            "BarChartData": dumps_json(bar_chart_data, ensure_ascii=False),  # 转换为JSON字符串并保留中文字符
             "month": M
         })
 
@@ -2962,7 +2962,7 @@ def runkeyStationInternalCompetition():
         final_data.append({
             "siteNum": station_no,
             "options": options_json,  # 使用转换后的JSON字符串
-            "BarChartData": json.dumps(bar_chart_data, ensure_ascii=False),
+            "BarChartData": dumps_json(bar_chart_data, ensure_ascii=False),
             "month": M
         })
 
@@ -2972,7 +2972,7 @@ def runkeyStationInternalCompetition():
         final_data.append({
             "siteNum": station_no,
             "options": options_json,  # 使用转换后的JSON字符串
-            "BarChartData": json.dumps(bar_chart_data, ensure_ascii=False),
+            "BarChartData": dumps_json(bar_chart_data, ensure_ascii=False),
             "month": M
         })
 
@@ -3481,7 +3481,7 @@ def runkeyStationInternalCompetition():
     }
 
     # 将options转换为JSON字符串
-    options_json = json.dumps(["设备质量得分", "一次成功率", "设备可用率", "电量损耗"], ensure_ascii=False)
+    options_json = dumps_json(["设备质量得分", "一次成功率", "设备可用率", "电量损耗"], ensure_ascii=False)
 
     # 生成最终数据
     final_data = []
@@ -3492,7 +3492,7 @@ def runkeyStationInternalCompetition():
         final_data.append({
             "siteNum": station_no,
             "options": options_json,  # 使用转换后的JSON字符串
-            "BarChartData": json.dumps(bar_chart_data, ensure_ascii=False),  # 转换为JSON字符串并保留中文字符
+            "BarChartData": dumps_json(bar_chart_data, ensure_ascii=False),  # 转换为JSON字符串并保留中文字符
             "month": M  # 添加月份列
         })
 
@@ -3502,7 +3502,7 @@ def runkeyStationInternalCompetition():
         final_data.append({
             "siteNum": station_no,
             "options": options_json,  # 使用转换后的JSON字符串
-            "BarChartData": json.dumps(bar_chart_data, ensure_ascii=False),
+            "BarChartData": dumps_json(bar_chart_data, ensure_ascii=False),
             "month": M  # 添加月份列
         })
 
@@ -3512,7 +3512,7 @@ def runkeyStationInternalCompetition():
         final_data.append({
             "siteNum": station_no,
             "options": options_json,  # 使用转换后的JSON字符串
-            "BarChartData": json.dumps(bar_chart_data, ensure_ascii=False),
+            "BarChartData": dumps_json(bar_chart_data, ensure_ascii=False),
             "month": M  # 添加月份列
         })
 
@@ -4120,7 +4120,7 @@ def runkeyStationInternalCompetition():
     }
 
     # 将options转换为JSON字符串
-    options_json = json.dumps(["使用效率得分", "功率利用率", "时长利用率", "单枪日均充电量", "功率效能比"],
+    options_json = dumps_json(["使用效率得分", "功率利用率", "时长利用率", "单枪日均充电量", "功率效能比"],
                               ensure_ascii=False)
 
     # 生成最终数据
@@ -4132,7 +4132,7 @@ def runkeyStationInternalCompetition():
         final_data.append({
             "siteNum": station_no,
             "options": options_json,  # 使用转换后的JSON字符串
-            "BarChartData": json.dumps(bar_chart_data, ensure_ascii=False),  # 转换为JSON字符串并保留中文字符
+            "BarChartData": dumps_json(bar_chart_data, ensure_ascii=False),  # 转换为JSON字符串并保留中文字符
             "month": M  # 添加月份列
         })
 
@@ -4142,7 +4142,7 @@ def runkeyStationInternalCompetition():
         final_data.append({
             "siteNum": station_no,
             "options": options_json,  # 使用转换后的JSON字符串
-            "BarChartData": json.dumps(bar_chart_data, ensure_ascii=False),
+            "BarChartData": dumps_json(bar_chart_data, ensure_ascii=False),
             "month": M  # 添加月份列
         })
 
@@ -4152,7 +4152,7 @@ def runkeyStationInternalCompetition():
         final_data.append({
             "siteNum": station_no,
             "options": options_json,  # 使用转换后的JSON字符串
-            "BarChartData": json.dumps(bar_chart_data, ensure_ascii=False),
+            "BarChartData": dumps_json(bar_chart_data, ensure_ascii=False),
             "month": M  # 添加月份列
         })
 
@@ -4613,14 +4613,14 @@ def runkeyStationInternalCompetition():
 
         final_data.append({
             "siteNum": station_no,
-            "radarData": json.dumps(radar_data, ensure_ascii=False),  # 转换为JSON字符串
-            "indicator": json.dumps([  # 转换为JSON字符串
+            "radarData": dumps_json(radar_data, ensure_ascii=False),  # 转换为JSON字符串
+            "indicator": dumps_json([  # 转换为JSON字符串
                 {"name": "经济效益"},
                 {"name": "设备质量"},
                 {"name": "使用效率"}
             ], ensure_ascii=False),
-            "barChartData": json.dumps(bar_chart_data, ensure_ascii=False),  # 转换为JSON字符串
-            "illustrate": json.dumps(illustrate, ensure_ascii=False)  # 转换为JSON字符串
+            "barChartData": dumps_json(bar_chart_data, ensure_ascii=False),  # 转换为JSON字符串
+            "illustrate": dumps_json(illustrate, ensure_ascii=False)  # 转换为JSON字符串
         })
 
     # 处理df_operation_2（城市公共）
@@ -4653,14 +4653,14 @@ def runkeyStationInternalCompetition():
 
         final_data.append({
             "siteNum": station_no,
-            "radarData": json.dumps(radar_data, ensure_ascii=False),  # 转换为JSON字符串
-            "indicator": json.dumps([  # 转换为JSON字符串
+            "radarData": dumps_json(radar_data, ensure_ascii=False),  # 转换为JSON字符串
+            "indicator": dumps_json([  # 转换为JSON字符串
                 {"name": "经济效益"},
                 {"name": "设备质量"},
                 {"name": "使用效率"}
             ], ensure_ascii=False),
-            "barChartData": json.dumps(bar_chart_data, ensure_ascii=False),  # 转换为JSON字符串
-            "illustrate": json.dumps(illustrate, ensure_ascii=False)  # 转换为JSON字符串
+            "barChartData": dumps_json(bar_chart_data, ensure_ascii=False),  # 转换为JSON字符串
+            "illustrate": dumps_json(illustrate, ensure_ascii=False)  # 转换为JSON字符串
         })
 
     # 处理df_operation_3（重卡专用）
@@ -4693,14 +4693,14 @@ def runkeyStationInternalCompetition():
 
         final_data.append({
             "siteNum": station_no,
-            "radarData": json.dumps(radar_data, ensure_ascii=False),  # 转换为JSON字符串
-            "indicator": json.dumps([  # 转换为JSON字符串
+            "radarData": dumps_json(radar_data, ensure_ascii=False),  # 转换为JSON字符串
+            "indicator": dumps_json([  # 转换为JSON字符串
                 {"name": "经济效益"},
                 {"name": "设备质量"},
                 {"name": "使用效率"}
             ], ensure_ascii=False),
-            "barChartData": json.dumps(bar_chart_data, ensure_ascii=False),  # 转换为JSON字符串
-            "illustrate": json.dumps(illustrate, ensure_ascii=False)  # 转换为JSON字符串
+            "barChartData": dumps_json(bar_chart_data, ensure_ascii=False),  # 转换为JSON字符串
+            "illustrate": dumps_json(illustrate, ensure_ascii=False)  # 转换为JSON字符串
         })
 
     # 创建最终DataFrame；即使 final_data 为空，也保留表结构
@@ -4810,7 +4810,7 @@ def runkeyStationInternalCompetition():
     print(targetData)
 
     # 将列表转换为紧凑格式的JSON字符串（无换行符）
-    json_output = json.dumps(targetData, ensure_ascii=False)
+    json_output = dumps_json(targetData, ensure_ascii=False)
 
     # 创建最终结果表
     Database_Table1 = pd.DataFrame({
@@ -5006,7 +5006,7 @@ def runkeyStationInternalCompetition():
         # 创建站点数据结构，将siteCharging转换为JSON字符串
         site_data = {
             "siteNum": site_num,
-            "siteCharging": json.dumps(charging_list, ensure_ascii=False),  # 转换为JSON字符串
+            "siteCharging": dumps_json(charging_list, ensure_ascii=False),  # 转换为JSON字符串
             "siteChargingDetail": site_charging_detail,
             "month": M
         }

@@ -1075,7 +1075,8 @@ def runkeyStationExternalCompetition():
         for dd_id, group in df.groupby(group_col):
             group = group.reset_index(drop=True)
             label_values = group[label_col]
-            data = group[indicator_cols]
+            data = group[indicator_cols].apply(pd.to_numeric, errors='coerce')
+            data = data.replace([np.inf, -np.inf], np.nan).fillna(0)
 
             # 如果组内数量太少，跳过或手动处理
             if len(data) < 2:
@@ -1093,12 +1094,21 @@ def runkeyStationExternalCompetition():
             dist_pos = np.sqrt(((data_scaled - ideal_pos) ** 2 * weights).sum(axis=1))
             dist_neg = np.sqrt(((data_scaled - ideal_neg) ** 2 * weights).sum(axis=1))
 
-            # 综合得分 & 调整
-            score = dist_neg / (dist_pos + dist_neg)
-            score_adj = MinMaxScaler((60, 100)).fit_transform(score.values.reshape(-1, 1)).flatten()
+            # 指标完全相同时正负理想解重合，分母为 0，得分按中位 0.5 处理
+            denominator = (dist_pos + dist_neg).to_numpy(dtype=float)
+            numerator = dist_neg.to_numpy(dtype=float)
+            score = np.divide(
+                numerator,
+                denominator,
+                out=np.full(numerator.shape, 0.5, dtype=float),
+                where=np.isfinite(denominator) & (denominator != 0),
+            )
+            score = np.where(np.isfinite(score), score, 0.5)
+            score_adj = MinMaxScaler((60, 100)).fit_transform(score.reshape(-1, 1)).flatten()
+            score_adj = np.where(np.isfinite(score_adj), score_adj, 60.0)
 
             # 排名
-            rank = pd.Series(score_adj).rank(ascending=False, method='min').astype(int)
+            rank = pd.Series(score_adj).rank(ascending=False, method='min').fillna(0).astype(int)
 
             # 拼接结果
             result = group.copy()
@@ -1107,6 +1117,12 @@ def runkeyStationExternalCompetition():
             result['排名'] = rank
             results.append(result)
 
+        if not results:
+            empty = df.iloc[0:0].copy()
+            empty['综合得分'] = np.nan
+            empty['综合得分(调整)'] = np.nan
+            empty['排名'] = np.nan
+            return empty
         return pd.concat(results, ignore_index=True)
 
     # In[318]:

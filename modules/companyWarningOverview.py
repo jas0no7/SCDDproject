@@ -777,7 +777,8 @@ def runcompanyWarningOverview():
         df=Database_Table1,
         table_name="dp_CompanyAlert_SiteRecovery_Detail_RecoveredSites",
         table_comment=table_comment,
-        column_comments=column_comments
+        column_comments=column_comments,
+        longtext_columns=['result']
     )
 
     # ### r2-正常待回本站点
@@ -848,7 +849,8 @@ def runcompanyWarningOverview():
         df=Database_Table2,
         table_name="dp_CompanyAlert_SiteRecovery_Detail_PendingSites",
         table_comment=table_comment,
-        column_comments=column_comments
+        column_comments=column_comments,
+        longtext_columns=['result']
     )
 
     # ### r3-滞后回本站点
@@ -919,7 +921,8 @@ def runcompanyWarningOverview():
         df=Database_Table3,
         table_name="dp_CompanyAlert_SiteRecovery_Detail_DelayedSites",
         table_comment=table_comment,
-        column_comments=column_comments
+        column_comments=column_comments,
+        longtext_columns=['result']
     )
     
     #新增：站点维度投资回本详情总表导出功能

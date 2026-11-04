@@ -72,6 +72,31 @@ def runpanoramaOverview():
         month = int(year_month[4:6])
         return calendar.monthrange(year, month)[1]
 
+    def normalize_year_month(series):
+        """把 202610、202610.0、2026-10 统一成 YYYYMM。不足 6 位的原样保留。"""
+        text = series.astype(str).str.strip().str.replace(r'\.0$', '', regex=True)
+        digits = text.str.replace(r'\D', '', regex=True)
+        return digits.str.slice(0, 6).where(digits.str.len() >= 6, text)
+
+    def top1_label(frame, group_col, value_col, agg):
+        """取分组后的第一名。当月没有数据时返回空字符串，避免 iloc[0] 越界。"""
+        if frame is None or frame.empty or group_col not in frame.columns:
+            return ''
+        if isinstance(frame[group_col], pd.DataFrame):
+            frame = frame.loc[:, ~frame.columns.duplicated()]
+        ranked = (
+            frame.groupby(group_col, dropna=False)[value_col]
+            .agg(agg)
+            .reset_index()
+            .sort_values(by=value_col, ascending=False)
+        )
+        if ranked.empty:
+            return ''
+        label = ranked.iloc[0][group_col]
+        if pd.isna(label):
+            return ''
+        return label
+
     # In[11]:
 
     get_days_in_month(M)
@@ -459,6 +484,13 @@ def runpanoramaOverview():
     # In[43]:
 
     # 后续经营指标统一使用停运+投运+退运口径。
+    # 左连接未匹配的月份会被 fillna(0) 变成 0 或 202610.0，先统一成 YYYYMM 再参与当月比较。
+    DF_cba_org_data['cba_month'] = normalize_year_month(DF_cba_org_data['cba_month'])
+    DF_cba_org_data = DF_cba_org_data[
+        DF_cba_org_data['cba_month'].str.match(r'^\d{6}$', na=False)
+    ].copy()
+    DF_cba_org_data['year'] = DF_cba_org_data['cba_month'].str[:4]
+    M = str(M)
     DF_Business_Analysis = DF_cba_org_data.copy()
 
     # In[44]:
@@ -545,8 +577,9 @@ def runpanoramaOverview():
 
     # In[540]:
 
-    d6 = DF_cba_org_data[DF_cba_org_data['cba_month'] == M].groupby('station_category').agg(
-        {'rec_data': 'sum'}).reset_index().sort_values(by='rec_data', ascending=False).iloc[0]['station_category']
+    d6 = top1_label(
+        DF_cba_org_data[DF_cba_org_data['cba_month'] == M],
+        'station_category', 'rec_data', 'sum')
     data2.append(d6)
     data2
 
@@ -554,8 +587,9 @@ def runpanoramaOverview():
 
     # In[541]:
 
-    d7 = DF_cba_org_data[DF_cba_org_data['cba_month'] == M].groupby('city').agg(
-        {'rec_data': 'sum'}).reset_index().sort_values(by='rec_data', ascending=False).iloc[0]['city']
+    d7 = top1_label(
+        DF_cba_org_data[DF_cba_org_data['cba_month'] == M],
+        'city', 'rec_data', 'sum')
     data2.append(d7)
     data2
 
@@ -759,8 +793,9 @@ def runpanoramaOverview():
     # In[565]:
 
     DF_operation_duration['month'] = DF_operation_duration['month'].astype('str')
-    d6 = DF_operation_duration[DF_operation_duration['month'] == M].groupby('station_category').agg(
-        {'可用率': 'mean'}).reset_index().sort_values(by='可用率', ascending=False).iloc[0]['station_category']
+    d6 = top1_label(
+        DF_operation_duration[DF_operation_duration['month'] == M],
+        'station_category', '可用率', 'mean')
     data4.append(d6)
     data4
 
@@ -768,8 +803,9 @@ def runpanoramaOverview():
 
     # In[566]:
 
-    d7 = DF_operation_duration[DF_operation_duration['month'] == M].groupby('city').agg(
-        {'可用率': 'mean'}).reset_index().sort_values(by='可用率', ascending=False).iloc[0]['city']
+    d7 = top1_label(
+        DF_operation_duration[DF_operation_duration['month'] == M],
+        'city', '可用率', 'mean')
     data4.append(d7)
     data4
 
@@ -962,7 +998,8 @@ def runpanoramaOverview():
 
     # In[588]:
 
-    d6 = DF_province[DF_province['stat_time'] == M]['avg_daily_energy'].values[0]
+    province_month = DF_province[DF_province['stat_time'] == M]['avg_daily_energy']
+    d6 = province_month.values[0] if len(province_month) else 0
     data5.append(d6)
     data5
 
@@ -970,9 +1007,9 @@ def runpanoramaOverview():
 
     # In[589]:
 
-    d7 = d1_1[d1_1['cba_month'] == M].groupby('station_category').agg(
-        {'gun_charging_volume_d': 'mean'}).reset_index().sort_values(by='gun_charging_volume_d', ascending=False).iloc[
-        0]['station_category']
+    d7 = top1_label(
+        d1_1[d1_1['cba_month'] == M],
+        'station_category', 'gun_charging_volume_d', 'mean')
     data5.append(d7)
     data5
 
@@ -980,11 +1017,7 @@ def runpanoramaOverview():
 
     # In[590]:
 
-    d8 = \
-        d1_1.groupby('city').agg({'gun_charging_volume_d': 'mean'}).reset_index().sort_values(
-            by='gun_charging_volume_d',
-            ascending=False).iloc[0][
-            'city']
+    d8 = top1_label(d1_1, 'city', 'gun_charging_volume_d', 'mean')
     data5.append(d8)
     data5
 
@@ -1457,8 +1490,7 @@ def runpanoramaOverview():
 
     # In[634]:
 
-    d6 = DF_volume.groupby('station_category').agg({'off_peak_elec_cons': 'sum'}).reset_index().sort_values(
-        by='off_peak_elec_cons', ascending=False).iloc[0]['station_category']
+    d6 = top1_label(DF_volume, 'station_category', 'off_peak_elec_cons', 'sum')
     data7.append(d6)
     data7
 
@@ -1466,9 +1498,7 @@ def runpanoramaOverview():
 
     # In[635]:
 
-    d7 = DF_volume.groupby('city').agg({'off_peak_elec_cons': 'sum'}).reset_index().sort_values(by='off_peak_elec_cons',
-                                                                                                ascending=False).iloc[
-        0]['city']
+    d7 = top1_label(DF_volume, 'city', 'off_peak_elec_cons', 'sum')
     data7.append(d7)
     data7
 

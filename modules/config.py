@@ -85,6 +85,36 @@ def Statistical_Time():
     return M, previous_month_str, year, last_year, last_year_month_str, P_M
 
 
+def dumps_json(obj, ensure_ascii=False, **kwargs):
+    """把结果转成 JSON 字符串。pandas/numpy 标量先转成内置数值。"""
+
+    def default(value):
+        if isinstance(value, np.integer):
+            return int(value)
+        if isinstance(value, np.floating):
+            number = float(value)
+            return number if np.isfinite(number) else None
+        if isinstance(value, np.bool_):
+            return bool(value)
+        if isinstance(value, np.ndarray):
+            return value.tolist()
+        if isinstance(value, (pd.Timestamp, datetime)):
+            return value.isoformat()
+        try:
+            if value is pd.NA or value is pd.NaT or (
+                not isinstance(value, (list, dict, tuple, set)) and bool(pd.isna(value))
+            ):
+                return None
+        except (TypeError, ValueError):
+            pass
+        raise TypeError(
+            f'Object of type {value.__class__.__name__} is not JSON serializable'
+        )
+
+    kwargs.setdefault('default', default)
+    return json.dumps(obj, ensure_ascii=ensure_ascii, **kwargs)
+
+
 def sanitize_database_value(value):
     """将待入库数据中的 NaN、inf 和 -inf 统一转换为 0。
 

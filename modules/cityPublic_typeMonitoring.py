@@ -1023,6 +1023,8 @@ def runcityPublic_typeMonitoring():
             on a.station_no =b.station_no
             """ % (t1, t2)
     DF_org_data_pre_gun = SQL(sql)
+    # 站点表和成本效益表都带 station_no，SELECT * 连接后列名重复，分组前只保留第一列。
+    DF_org_data_pre_gun = DF_org_data_pre_gun.loc[:, ~DF_org_data_pre_gun.columns.duplicated()].copy()
     DF_org_data_pre_gun = limit_month_data_to_report_month(
         DF_org_data_pre_gun, 'cba_month'
     )
@@ -6900,7 +6902,7 @@ def runcityPublic_typeMonitoring():
 
     # In[1227]:
 
-    DF_cba_org_datawe2 = DF_cba_org_datawe.T.drop_duplicates().T
+    DF_cba_org_datawe2 = DF_cba_org_datawe.loc[:, ~DF_cba_org_datawe.columns.duplicated()]
 
     # In[1228]:
 
@@ -7718,7 +7720,7 @@ def runcityPublic_typeMonitoring():
 
     # In[1315]:
 
-    DF_cba_org_datzhongka = DF_cba_org_datzhongka.T.drop_duplicates().T
+    DF_cba_org_datzhongka = DF_cba_org_datzhongka.loc[:, ~DF_cba_org_datzhongka.columns.duplicated()]
     result_vloumes_zk = (
         DF_cba_org_datzhongka.groupby('station_no')['gun_charging_volume_day']
         .mean()
@@ -8300,7 +8302,7 @@ def runcityPublic_typeMonitoring():
         (DF_org_data_pre_gun['cba_month'] == M) &
         (DF_org_data_pre_gun['station_category'] == '高速公共')
         ][['gun_charging_volume_day', 'station_no']].copy()
-    DF_cba_org_datgaosu = DF_cba_org_datgaosu.T.drop_duplicates().T
+    DF_cba_org_datgaosu = DF_cba_org_datgaosu.loc[:, ~DF_cba_org_datgaosu.columns.duplicated()]
 
     result_vloumes_gs = (
         DF_cba_org_datgaosu.groupby('station_no')['gun_charging_volume_day']
@@ -8772,7 +8774,7 @@ def runcityPublic_typeMonitoring():
         (DF_org_data_pre_gun['cba_month'] == M) &
         (DF_org_data_pre_gun['station_category'] == '公交专用')
         ][['gun_charging_volume_day', 'station_no']].copy()
-    DF_cba_org_datgongjiao = DF_cba_org_datgongjiao.T.drop_duplicates().T
+    DF_cba_org_datgongjiao = DF_cba_org_datgongjiao.loc[:, ~DF_cba_org_datgongjiao.columns.duplicated()]
 
     result_vloumes_gongjiao = (
         DF_cba_org_datgongjiao.groupby('station_no')['gun_charging_volume_day']
@@ -9258,7 +9260,7 @@ def runcityPublic_typeMonitoring():
         (DF_org_data_pre_gun['cba_month'] == M) &
         (DF_org_data_pre_gun['station_category'] == '小区有序')
         ][['gun_charging_volume_day', 'station_no']].copy()
-    DF_cba_org_datxiaoqu = DF_cba_org_datxiaoqu.T.drop_duplicates().T
+    DF_cba_org_datxiaoqu = DF_cba_org_datxiaoqu.loc[:, ~DF_cba_org_datxiaoqu.columns.duplicated()]
 
     result_vloumes_xiaoqu = (
         DF_cba_org_datxiaoqu.groupby('station_no')['gun_charging_volume_day']
@@ -9734,7 +9736,7 @@ def runcityPublic_typeMonitoring():
         (DF_org_data_pre_gun['cba_month'] == M) &
         (DF_org_data_pre_gun['station_category'] == '其他专用')
         ][['gun_charging_volume_day', 'station_no']].copy()
-    DF_cba_org_datqita = DF_cba_org_datqita.T.drop_duplicates().T
+    DF_cba_org_datqita = DF_cba_org_datqita.loc[:, ~DF_cba_org_datqita.columns.duplicated()]
 
     result_vloumes_qita = (
         DF_cba_org_datqita.groupby('station_no')['gun_charging_volume_day']
@@ -10198,7 +10200,7 @@ def runcityPublic_typeMonitoring():
     DF_cba_org_v2g = merged2_v2g[merged2_v2g['cba_month'] == M][
         ['gun_charging_volume_d', 'station_no']
     ].copy()
-    DF_cba_org_v2g = DF_cba_org_v2g.T.drop_duplicates().T
+    DF_cba_org_v2g = DF_cba_org_v2g.loc[:, ~DF_cba_org_v2g.columns.duplicated()]
 
     result_vloumes_v2g = (
         DF_cba_org_v2g.groupby('station_no')['gun_charging_volume_d']
@@ -11008,6 +11010,8 @@ def runcityPublic_typeMonitoring():
             on a.station_no =b.station_no
             """ % (t1, t2)
     DF_org_data_pre_gun = SQL(sql)
+    # 站点表和成本效益表都带 station_no，SELECT * 连接后列名重复，分组前只保留第一列。
+    DF_org_data_pre_gun = DF_org_data_pre_gun.loc[:, ~DF_org_data_pre_gun.columns.duplicated()].copy()
     DF_org_data_pre_gun = limit_month_data_to_report_month(
         DF_org_data_pre_gun, 'cba_month'
     )
