@@ -10168,7 +10168,8 @@ def runcityPublic_typeMonitoring():
         table_name="dp_qita_scdd_nowpoint",
 
         table_comment=table_comment,
-        column_comments=column_comments
+        column_comments=column_comments,
+        longtext_columns=['result']
     )
 
     # ## V2G
@@ -10804,7 +10805,7 @@ def runcityPublic_typeMonitoring():
 
     # In[1414]:
 
-    dqrjcdl = dqrjcdl.round(2)
+    dqrjcdl = round(dqrjcdl, 2)
     dqrjcdl
 
     # ### 当年功率利用率
@@ -10896,7 +10897,7 @@ def runcityPublic_typeMonitoring():
 
     # In[1430]:
 
-    permonth_pt_gdsl = cur_pt_gdsl.round(2)
+    permonth_pt_gdsl = round(cur_pt_gdsl, 2)
 
     # In[1431]:
 
@@ -11031,42 +11032,42 @@ def runcityPublic_typeMonitoring():
     csss_dqrjcdl_bysj = DF_org_data_pre_gun[(DF_org_data_pre_gun['cba_month'] == M) & (DF_org_data_pre_gun['station_category'] == '城市公共')].copy()
     csss_dqrjcdl_bysj['gun_charging_volume_d'] = csss_dqrjcdl_bysj['gun_charging_volume'] / get_days_in_month(M)
     csss_dqrjcdl_bysj = csss_dqrjcdl_bysj['gun_charging_volume_d'].mean()
-    csss_dqrjcdl_bysj = csss_dqrjcdl_bysj.round(2)
+    csss_dqrjcdl_bysj = round(csss_dqrjcdl_bysj, 2)
     print('城市公共单枪日均充电量本月数据：', csss_dqrjcdl_bysj)
 
     # 高速公共
     gscs_dqrjcdl_bysj = DF_org_data_pre_gun[(DF_org_data_pre_gun['cba_month'] == M) & (DF_org_data_pre_gun['station_category'] == '高速公共')].copy()
     gscs_dqrjcdl_bysj['gun_charging_volume_d'] = gscs_dqrjcdl_bysj['gun_charging_volume'] / get_days_in_month(M)
     gscs_dqrjcdl_bysj = gscs_dqrjcdl_bysj['gun_charging_volume_d'].mean()
-    gscs_dqrjcdl_bysj = gscs_dqrjcdl_bysj.round(2)
+    gscs_dqrjcdl_bysj = round(gscs_dqrjcdl_bysj, 2)
     print('高速公共单枪日均充电量本月数据：', gscs_dqrjcdl_bysj)
 
     # 重卡专用
     zkzy_dqrjcdl_bysj = DF_org_data_pre_gun[(DF_org_data_pre_gun['cba_month'] == M) & (DF_org_data_pre_gun['station_category'] == '重卡专用')].copy()
     zkzy_dqrjcdl_bysj['gun_charging_volume_d'] = zkzy_dqrjcdl_bysj['gun_charging_volume'] / get_days_in_month(M)
     zkzy_dqrjcdl_bysj = zkzy_dqrjcdl_bysj['gun_charging_volume_d'].mean()
-    zkzy_dqrjcdl_bysj = zkzy_dqrjcdl_bysj.round(2)
+    zkzy_dqrjcdl_bysj = round(zkzy_dqrjcdl_bysj, 2)
     print('重卡专用单枪日均充电量本月数据：', zkzy_dqrjcdl_bysj)
 
     # 公交专用
     gjzy_dqrjcdl_bysj = DF_org_data_pre_gun[(DF_org_data_pre_gun['cba_month'] == M) & (DF_org_data_pre_gun['station_category'] == '公交专用')].copy()
     gjzy_dqrjcdl_bysj['gun_charging_volume_d'] = gjzy_dqrjcdl_bysj['gun_charging_volume'] / get_days_in_month(M)
     gjzy_dqrjcdl_bysj = gjzy_dqrjcdl_bysj['gun_charging_volume_d'].mean()
-    gjzy_dqrjcdl_bysj = gjzy_dqrjcdl_bysj.round(2)
+    gjzy_dqrjcdl_bysj = round(gjzy_dqrjcdl_bysj, 2)
     print('公交专用单枪日均充电量本月数据：', gjzy_dqrjcdl_bysj)
 
     # 小区有序
     xqyx_dqrjcdl_bysj = DF_org_data_pre_gun[(DF_org_data_pre_gun['cba_month'] == M) & (DF_org_data_pre_gun['station_category'] == '小区有序')].copy()
     xqyx_dqrjcdl_bysj['gun_charging_volume_d'] = xqyx_dqrjcdl_bysj['gun_charging_volume'] / get_days_in_month(M)
     xqyx_dqrjcdl_bysj = xqyx_dqrjcdl_bysj['gun_charging_volume_d'].mean()
-    xqyx_dqrjcdl_bysj = xqyx_dqrjcdl_bysj.round(2)
+    xqyx_dqrjcdl_bysj = round(xqyx_dqrjcdl_bysj, 2)
     print('小区有序单枪日均充电量本月数据：', xqyx_dqrjcdl_bysj)
 
     # 其他专用
     qtzy_dqrjcdl_bysj = DF_org_data_pre_gun[(DF_org_data_pre_gun['cba_month'] == M) & (DF_org_data_pre_gun['station_category'] == '其他专用')].copy()
     qtzy_dqrjcdl_bysj['gun_charging_volume_d'] = qtzy_dqrjcdl_bysj['gun_charging_volume'] / get_days_in_month(M)
     qtzy_dqrjcdl_bysj = qtzy_dqrjcdl_bysj['gun_charging_volume_d'].mean()
-    qtzy_dqrjcdl_bysj = qtzy_dqrjcdl_bysj.round(2)
+    qtzy_dqrjcdl_bysj = round(qtzy_dqrjcdl_bysj, 2)
     print('其他专用单枪日均充电量本月数据：', qtzy_dqrjcdl_bysj)
     # ### 本年数据
     d4_1 = DF_org_data_pre_gun[
@@ -11721,7 +11722,7 @@ def runcityPublic_typeMonitoring():
     csgg_gd = DF_SCGD_cur[DF_SCGD_cur['station_category'] == "城市公共"]
     csgg_dgsl = pd.to_numeric(csgg_gd['单桩工单'], errors='coerce').fillna(0).astype(float).mean()
 
-    csgg_dgsl = csgg_dgsl.round(2)
+    csgg_dgsl = round(csgg_dgsl, 2)
     csgg_dgsl
 
     # In[1443]:
@@ -11831,7 +11832,7 @@ def runcityPublic_typeMonitoring():
     zkcdqzs_point = zkzy_rjcdl['charge_point_count'].sum()
     zkglzs_count = zkzy_rjcdl['plat_data_charging_volume'].sum()
     zkzy_dqrjcdl = zkglzs_count / zkcdqzs_point / DYTS
-    zkzy_dqrjcdl = zkzy_dqrjcdl.round(2)
+    zkzy_dqrjcdl = round(zkzy_dqrjcdl, 2)
 
     print("重卡专用的单枪日均充电量:", zkzy_dqrjcdl)
 
@@ -11972,7 +11973,7 @@ def runcityPublic_typeMonitoring():
     gjcdqzs_point = gjzy_rjcdl['charge_point_count'].sum()
     gjglzs_count = gjzy_rjcdl['plat_data_charging_volume'].sum()
     gjzy_dqrjcdl = gjglzs_count / gjcdqzs_point / DYTS
-    gjzy_dqrjcdl = gjzy_dqrjcdl.round(2)
+    gjzy_dqrjcdl = round(gjzy_dqrjcdl, 2)
     print("公交专用的单枪日均充电量:", gjzy_dqrjcdl)
 
     df_gjzyl = DF_cba_pue[DF_cba_pue['cba_month'].astype(str).str[:4] == str(year)].copy()
@@ -12000,7 +12001,7 @@ def runcityPublic_typeMonitoring():
 
     gjzy_gd = DF_SCGD_cur[DF_SCGD_cur['station_category'] == "公交专用"]
     gjzy_dgsl = pd.to_numeric(gjzy_gd['单桩工单'], errors='coerce').fillna(0).astype(float).mean()
-    gjzy_dgsl = gjzy_dgsl.round(2)
+    gjzy_dgsl = round(gjzy_dgsl, 2)
 
     print("公交专用的工单数量:", gjzy_dgsl)
 
@@ -12110,7 +12111,7 @@ def runcityPublic_typeMonitoring():
     gsggcdqzs_point = gsgg_rjcdl['charge_point_count'].sum()
     gsgglzs_count = gsgg_rjcdl['plat_data_charging_volume'].sum()
     gsgg_dqrjcdl = gsgglzs_count / gsggcdqzs_point / DYTS
-    gsgg_dqrjcdl = gsgg_dqrjcdl.round(2)
+    gsgg_dqrjcdl = round(gsgg_dqrjcdl, 2)
     print("高速公共的单枪日均充电量:", gsgg_dqrjcdl)
 
     df_gsggl = DF_cba_pue[DF_cba_pue['cba_month'].astype(str).str[:4] == str(year)].copy()
@@ -12138,7 +12139,7 @@ def runcityPublic_typeMonitoring():
 
     gsgg_gd = DF_SCGD_cur[DF_SCGD_cur['station_category'] == "高速公共"]
     gsgg_dgsl = pd.to_numeric(gsgg_gd['单桩工单'], errors='coerce').fillna(0).astype(float).mean()
-    gsgg_dgsl = gsgg_dgsl.round(2)
+    gsgg_dgsl = round(gsgg_dgsl, 2)
     print("高速公共的工单数量:", gsgg_dgsl)
 
     # In[1455]:
@@ -12247,7 +12248,7 @@ def runcityPublic_typeMonitoring():
     xqcdqzs_point = xqyx_rjcdl['charge_point_count'].sum()
     xqglzs_count = xqyx_rjcdl['plat_data_charging_volume'].sum()
     xqyx_dqrjcdl = xqglzs_count / xqcdqzs_point / DYTS
-    xqyx_dqrjcdl = xqyx_dqrjcdl.round(2)
+    xqyx_dqrjcdl = round(xqyx_dqrjcdl, 2)
     print("小区有序的单枪日均充电量:", xqyx_dqrjcdl)
 
     df_xqyxl = DF_cba_pue[DF_cba_pue['cba_month'].astype(str).str[:4] == str(year)].copy()
@@ -12412,7 +12413,7 @@ def runcityPublic_typeMonitoring():
 
     qtzy_gd = DF_SCGD_cur[DF_SCGD_cur['station_category'] == "其他专用"]
     qtzy_dgsl = pd.to_numeric(qtzy_gd['单桩工单'], errors='coerce').fillna(0).astype(float).mean()
-    qtzy_dgsl = qtzy_dgsl.round(2)
+    qtzy_dgsl = round(qtzy_dgsl, 2)
     print("其他专用的工单数量:", qtzy_dgsl)
 
     # In[1463]:

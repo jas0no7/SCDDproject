@@ -787,8 +787,11 @@ def runkeyStationInternalCompetition():
 
         data_list.append(site_data)
 
-    # 创建最终结果表
-    Database_Table3 = pd.DataFrame(data_list)
+    # 创建最终结果表；没有站点时也保留字段，避免主键列丢失
+    Database_Table3 = pd.DataFrame(
+        data_list,
+        columns=['siteNum', 'pieChartData1', 'pieChartData2', 'month']
+    )
 
     # 输出结果
     Database_Table3
@@ -5013,8 +5016,11 @@ def runkeyStationInternalCompetition():
 
         data_list.append(site_data)
 
-    # 创建最终结果表
-    Database_Table4 = pd.DataFrame(data_list)
+    # 创建最终结果表；没有充电桩明细时也保留字段，避免主键列丢失
+    Database_Table4 = pd.DataFrame(
+        data_list,
+        columns=['siteNum', 'siteCharging', 'siteChargingDetail', 'month']
+    )
 
     # 输出结果
     Database_Table4

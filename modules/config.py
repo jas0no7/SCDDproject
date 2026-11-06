@@ -85,6 +85,38 @@ def Statistical_Time():
     return M, previous_month_str, year, last_year, last_year_month_str, P_M
 
 
+# MySQL TEXT 上限是 65535 字节。留出余量，超过后改用 LONGTEXT。
+_TEXT_BYTE_LIMIT = 60000
+
+
+def _columns_exceeding_text_limit(df, skip_columns, byte_limit=_TEXT_BYTE_LIMIT):
+    """找出对象列里超过 TEXT 字节上限的列。"""
+    oversized = []
+    skip_columns = set(skip_columns or [])
+    for col in df.columns:
+        if col in skip_columns:
+            continue
+        series = df[col]
+        if series.dtype != object and str(series.dtype) != 'string':
+            continue
+        for value in series:
+            if isinstance(value, str):
+                text = value
+            elif value is None:
+                continue
+            else:
+                try:
+                    if pd.isna(value):
+                        continue
+                except (TypeError, ValueError):
+                    pass
+                text = str(value)
+            if len(text.encode('utf-8')) > byte_limit:
+                oversized.append(col)
+                break
+    return oversized
+
+
 def dumps_json(obj, ensure_ascii=False, **kwargs):
     """把结果转成 JSON 字符串。pandas/numpy 标量先转成内置数值。"""
 
@@ -197,9 +229,13 @@ def import_data_with_cursor(df, table_name, table_comment=None, column_comments=
     cursor = conn.cursor()
 
     # 处理可选参数默认值
-    longtext_columns = longtext_columns or []
+    longtext_columns = list(longtext_columns or [])
     primary_keys = primary_keys or []
     target_pk_set = set(primary_keys)  # 目标主键集合（用于对比）
+    for col in _columns_exceeding_text_limit(df, primary_keys):
+        if col not in longtext_columns:
+            longtext_columns.append(col)
+            print(f"列 {col} 超过 TEXT 上限，自动改为 LONGTEXT")
 
     # 验证主键有效性
     if primary_keys:
@@ -333,6 +369,7 @@ def import_data_with_cursor(df, table_name, table_comment=None, column_comments=
                     print(f"列 {col} 设为 LONGTEXT 成功")
                 except Exception as e:
                     print(f"设置 {col} 为 LONGTEXT 失败: {e}")
+                    raise
 
         # 处理主键设置（核心优化部分）
         if primary_keys:

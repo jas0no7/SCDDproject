@@ -1,5 +1,9 @@
 
 import threading
+import argparse
+import re
+
+import modules.config as config
 
 from loguru import logger
 from modules.cityPublic_typeMonitoring import runcityPublic_typeMonitoring
@@ -64,5 +68,17 @@ def run():
 
     logger.success("所有程序执行完毕")
 
+def parse_report_month(value):
+    """校验命令行传入的分析月份。"""
+    if not re.fullmatch(r'\d{6}', value) or not 1 <= int(value[4:]) <= 12 or int(value[:4]) == 0:
+        raise argparse.ArgumentTypeError('月份必须为有效的 YYYYMM 格式，例如 202609')
+    return value
+
+
 if __name__ == '__main__':
+    parser = argparse.ArgumentParser(description='运行四川电动数据分析任务')
+    parser.add_argument('month', nargs='?', type=parse_report_month,
+                        help='分析月份，格式为 YYYYMM；不传则使用上个月')
+    args = parser.parse_args()
+    config.CUSTOM_MONTH = args.month
     run()

@@ -1,1 +1,0 @@
-  所有 的 计算逻辑仍从 原来的表中读取，但是 站点的技改关系 从 dp_station_tech_upgrade_mapping 读取出来，技改站点不再局限于 原来的几个站点。写法可以参考[techUpgradeStation.py](modules/techUpgradeStation.py)
