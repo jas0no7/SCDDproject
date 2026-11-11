@@ -1162,8 +1162,9 @@ def runkeyStationInternalCompetition():
     # In[307]:
 
     # 第八步：计算balance（盈亏平衡点）
-    balance4['balance'] = (balance4['investment_amount'] - balance4['total_subsidy'] - balance4[
-        'except_investment_amount']) / (8 * 12 - balance4['今年之前的累计投运月份'])
+    remaining_months = 8 * 12 - balance4['今年之前的累计投运月份']
+    balance4['balance'] = ((balance4['investment_amount'] - balance4['total_subsidy'] - balance4[
+        'except_investment_amount']) / remaining_months.replace(0, np.nan)).replace([np.inf, -np.inf], np.nan)
 
     # 将balance和'今年之前的累计投运月份'同时匹配到income2
     # 添加income2的year列
@@ -1198,8 +1199,8 @@ def runkeyStationInternalCompetition():
 
     # In[309]:
 
-    # 删除balance列为空的行
-    income2 = income2.dropna(subset=['balance'])
+    # 保留已达到八年周期的记录，以便展示对应提示；其他无法计算的记录沿用原来的过滤规则。
+    income2 = income2[income2['balance'].notna() | (income2['今年之前的累计投运月份'] >= 96)].copy()
 
     # 验证结果
     print(income2.shape)
@@ -1238,6 +1239,7 @@ def runkeyStationInternalCompetition():
     # 按站点分组处理
     results = []
     for site_num, group in income2.groupby('station_no'):
+        group = group.sort_values('cba_month')
         # 获取该站点的回本进度
         recovery_progress = recovery_progress_dict.get(site_num, 0)
 
@@ -1288,8 +1290,8 @@ def runkeyStationInternalCompetition():
         # 获取最新月份数据（target_months最后一个月份对应的数据）
         latest_data = group.iloc[-1] if not group.empty else None
 
-        # 判断3：运营时长>96个月
-        if latest_data is not None and latest_data['今年之前的累计投运月份'] > 96:
+        # 判断3：运营时长达到或超过96个月，无法再按剩余月份计算平衡点。
+        if latest_data is not None and latest_data['今年之前的累计投运月份'] >= 96:
             results.append({
                 "siteNum": site_num,
                 "barChartData": {
@@ -1300,7 +1302,7 @@ def runkeyStationInternalCompetition():
                     "yAxisRightName": "元"
                 },
                 "profitPoint": {
-                    "content": [{"title": "此站点累计运营时长已超过八年", "value": ""}],
+                    "content": [{"title": "此站点累计运营时长已达到或超过八年", "value": ""}],
                     "remark": "备注:盈亏平衡点是指在预设8年回收周期条件下，站点运营期间的总成本(含初始投资)均摊至每月后的单位成本值，当月收入达到该值时即实现收支平衡"
                 },
                 "month": M
@@ -1346,11 +1348,13 @@ def runkeyStationInternalCompetition():
                 if row['cba_month'] in month_to_index:
                     idx = month_to_index[row['cba_month']]
                     income_vals[idx] = row['income']
-                    balance_vals[idx] = row['balance']
+                    balance_vals[idx] = row['balance'] if pd.notna(row['balance']) else None
 
             # 修改balance_vals：让balance＜0的值等于该cba_month前面balance＞0的值
             last_positive_balance = None
             for i in range(len(balance_vals)):
+                if balance_vals[i] is None:
+                    continue
                 if balance_vals[i] > 0:
                     last_positive_balance = balance_vals[i]
                 elif balance_vals[i] < 0 and last_positive_balance is not None:
@@ -1384,14 +1388,14 @@ def runkeyStationInternalCompetition():
                 if len(year_values) >= 2:
                     # 检查第二个值是否为负数
                     if year_values[1] < 0:
-                        year_value = f"{int(year_values[0])}元"  # 只显示第一个值
+                        year_value = f"{int(year_values[0]) if pd.notna(year_values[0]) else '--'}元"  # 只显示第一个值
                     else:
-                        year_value = f"{int(year_values[0])}元/{int(year_values[1])}元"
+                        year_value = "/".join(f"{int(value) if pd.notna(value) else '--'}元" for value in year_values[:2])
                 else:
                     year_value = "--元/--元"
             elif sorted_years:
                 year_title = f"{sorted_years[0]}年"
-                year_value = f"{int(year_values[0])}元" if year_values else "--元"
+                year_value = f"{int(year_values[0])}元" if year_values and pd.notna(year_values[0]) else "--元"
             else:
                 year_title = "----/----年"
                 year_value = "--元/--元"
@@ -1402,7 +1406,7 @@ def runkeyStationInternalCompetition():
 
             # 只考虑有实际数据的月份
             for _, row in group.iterrows():
-                if row['cba_month'] in month_to_index:
+                if row['cba_month'] in month_to_index and pd.notna(row['balance']):
                     month_str = axisData[month_to_index[row['cba_month']]]
                     if row['income'] >= row['balance']:
                         profit_months.append(month_str)
@@ -1453,7 +1457,7 @@ def runkeyStationInternalCompetition():
                 if row['cba_month'] in month_to_index:
                     idx = month_to_index[row['cba_month']]
                     income_vals[idx] = row['income']
-                    balance_vals[idx] = row['balance']
+                    balance_vals[idx] = row['balance'] if pd.notna(row['balance']) else None
 
             # 获取cba_month中的年份
             cba_years = set()
@@ -1475,7 +1479,7 @@ def runkeyStationInternalCompetition():
                     max_month = year_records['cba_month'].max()
                     # 获取该月份的balance值
                     balance_val = year_records[year_records['cba_month'] == max_month]['balance'].values[0]
-                    year_values.append(str(int(balance_val)))
+                    year_values.append(str(int(balance_val)) if pd.notna(balance_val) else '--')
 
             # 构建标题和值
             if len(sorted_years) > 1:
@@ -1494,7 +1498,7 @@ def runkeyStationInternalCompetition():
 
             # 只考虑有实际数据的月份
             for _, row in group.iterrows():
-                if row['cba_month'] in month_to_index:
+                if row['cba_month'] in month_to_index and pd.notna(row['balance']):
                     month_str = axisData[month_to_index[row['cba_month']]]
                     if row['income'] >= row['balance']:
                         profit_months.append(month_str)

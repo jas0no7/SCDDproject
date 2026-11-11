@@ -448,7 +448,7 @@ def runcityPublic_typeMonitoring():
      where merchant_nature = '电动公司'
        and operation_status in ('投运','停运')) c
     inner join
-    (select time,station_name,station_code,pile_status,normal_duration,operation_duration,city,pile_manufacturer from dp_operation_duration
+    (select time,station_name,station_code,pile_status,operation_duration,outage_duration,fault_duration,offline_duration,city,pile_manufacturer from dp_operation_duration
     where time like '%s' or time like '%s') d 
     on c.station_no = d.station_code
     """ % (t1, t2)
@@ -1239,7 +1239,7 @@ def runcityPublic_typeMonitoring():
          where merchant_nature = '电动公司'
            and operation_status in ('投运','停运')) c
         inner join
-        (select time,station_name,station_code,pile_status,normal_duration,operation_duration,pile_manufacturer,city from dp_operation_duration
+        (select time,station_name,station_code,pile_status,operation_duration,outage_duration,fault_duration,offline_duration,pile_manufacturer,city from dp_operation_duration
         where time like '%s' or time like '%s') d 
         on c.station_no = d.station_code
         """ % (t1, t2)
@@ -1248,13 +1248,18 @@ def runcityPublic_typeMonitoring():
         DF_operation_duration, 'time'
     )
 
-    DF_operation_duration = DF_operation_duration.fillna(0)
-
-    # 可用率计算
-
-    # 可用率=正常状态时长(秒)/在运时长(秒)
-    DF_operation_duration['可用率'] = DF_operation_duration['normal_duration'].astype('int') / DF_operation_duration[
-        'operation_duration'].astype('int')
+    # 缺失时长不能视为零，否则会高估可用率。
+    operation_duration = pd.to_numeric(DF_operation_duration['operation_duration'], errors='coerce')
+    operation_duration = operation_duration.where(operation_duration > 0)
+    DF_operation_duration['停运率'] = pd.to_numeric(DF_operation_duration['outage_duration'], errors='coerce') / operation_duration
+    DF_operation_duration['故障率'] = pd.to_numeric(DF_operation_duration['fault_duration'], errors='coerce') / operation_duration
+    DF_operation_duration['离线率'] = pd.to_numeric(DF_operation_duration['offline_duration'], errors='coerce') / operation_duration
+    DF_operation_duration['可用率'] = 1 - DF_operation_duration['停运率'] - DF_operation_duration['故障率'] - DF_operation_duration['离线率']
+    other_columns = DF_operation_duration.columns.difference(
+        ['operation_duration', 'outage_duration', 'fault_duration', 'offline_duration',
+         '停运率', '故障率', '离线率', '可用率']
+    )
+    DF_operation_duration[other_columns] = DF_operation_duration[other_columns].fillna(0)
 
     # 筛选正常桩
 
@@ -1402,21 +1407,6 @@ def runcityPublic_typeMonitoring():
     DF_cba_org_data['fin_cost_labor'] = DF_cba_org_data['fin_cost_labor'].astype(str).astype(float)
     print(DF_cba_org_data.info())
 
-    # 2、运维数据读取
-    sql = """
-    select station_no, stat_time as cba_month,maintenance_cost from  dp_station_maintenance_cost1
-    where 
-    (stat_time like '%s' or stat_time like '%s') and maintenance_cost>0
-    """ % (t1, t2)
-    DF_maintenance = SQL(sql)
-    DF_maintenance = limit_month_data_to_report_month(
-        DF_maintenance, 'cba_month'
-    )
-    # 运维费需要特殊处理，由万元变为元
-    DF_maintenance['maintenance_cost'] = DF_maintenance['maintenance_cost'].astype('float') * 10000
-    print(DF_maintenance.info())
-    DF_maintenance.head(1)
-
     # 3、租金
     sql = """
           SELECT cs.station_no, \
@@ -1436,49 +1426,8 @@ def runcityPublic_typeMonitoring():
           """
     DF_rent = SQL(sql)
 
-    # 4、商户分成数据
-    sql = """
-    select b.merchant_profit_amount,b.rec_month,a.station_no,a.city,a.station_category,a.dc_charge_point_count,a.ac_charge_point_count,a.operation_status from 
-    (SELECT 
-    cs.*
-    FROM
-    charging_station cs
-    LEFT JOIN rec_merchant rm ON cs.property_owner_merhant_id = rm.merchant_id
-    where 
-    cs.merchant_nature = '电动公司'
-    and cs.operation_status in ('投运','退运','停运')
-    ) a
-    left join 
-    (select * from fin_rec_result_detail where (rec_month like '%s' or  rec_month like '%s') and  merchant_id != 119 ) b
-    on a.station_no =b.station_no
-    """ % (t1, t2)
-    fin_rec_result_detail = SQL(sql)
-    fin_rec_result_detail = limit_month_data_to_report_month(
-        fin_rec_result_detail, 'rec_month'
-    )
-    fin_rec_result_detail['merchant_profit_amount'] = fin_rec_result_detail['merchant_profit_amount'].astype('float')
-    print(fin_rec_result_detail.info())
-
-    # 1、分成数据与运营数据合并
-
-    # 预处理填充空值
-    fin_rec_result_detail = fin_rec_result_detail.fillna(0)
-
-    # merchant_profit_amount为其他商户分成（成本数据）
-    fin_rec_result_detail = fin_rec_result_detail[['rec_month', 'station_no', 'merchant_profit_amount']]
-
-    # 更换列名便于匹配
-    fin_rec_result_detail = fin_rec_result_detail.rename(columns={'rec_month': 'cba_month'})
-
-    # 按年月汇总每个站点的分成数据
-    fin_rec_result_detail = fin_rec_result_detail.groupby(['cba_month', 'station_no']).agg(
-        {'merchant_profit_amount': 'sum'}).reset_index()
-
-    # 根据站点编号、年月关联分成数据，与运营数据
-    print('cba表关联分成数据前形状：', DF_cba_org_data.shape)
-    DF_cba_org_data = pd.merge(DF_cba_org_data, fin_rec_result_detail, on=['station_no', 'cba_month'], how='left')
-    DF_cba_org_data = DF_cba_org_data.fillna(0)
-    print('cba表关联分成数据后形状：', DF_cba_org_data.shape)
+    # 商户分成使用成本效益表中的清分费（实际清分金额）。
+    DF_cba_org_data['merchant_profit_amount'] = DF_cba_org_data['rec_cost_actual_rec_amount'].fillna(0)
 
     # 2、运营数据与运维费合并
     print('cba表关联运维费前形状：', DF_cba_org_data.shape)
@@ -1487,8 +1436,7 @@ def runcityPublic_typeMonitoring():
         lambda x: str(x)[:4] if pd.notnull(x) and len(str(x)) >= 4 else None
     )
 
-    DF_cba_org_data = pd.merge(DF_cba_org_data, DF_maintenance, on=['station_no', 'cba_month'], how='left')
-    DF_cba_org_data['maintenance_cost'] = DF_cba_org_data['maintenance_cost'].fillna(0)
+    DF_cba_org_data['maintenance_cost'] = DF_cba_org_data['om_cost_om'].fillna(0)
     print('cba表关联运维费后形状：', DF_cba_org_data.shape)
 
     # 收入数据合并
@@ -5110,7 +5058,7 @@ def runcityPublic_typeMonitoring():
          where merchant_nature = '电动公司'
            and operation_status in ('投运','停运')) c
         inner join
-        (select time,station_name,station_code,pile_status,normal_duration,operation_duration,city from dp_operation_duration
+        (select time,station_name,station_code,pile_status,operation_duration,outage_duration,fault_duration,offline_duration,city from dp_operation_duration
         where time like '%s' or time like '%s') d 
         on c.station_no = d.station_code
         """ % (t1, t2)
@@ -5119,13 +5067,18 @@ def runcityPublic_typeMonitoring():
         DF_operation_duration, 'time'
     )
 
-    DF_operation_duration = DF_operation_duration.fillna(0)
-
-    # 可用率计算
-
-    # 可用率=正常状态时长(秒)/在运时长(秒)
-    DF_operation_duration['可用率'] = DF_operation_duration['normal_duration'].astype('int') / DF_operation_duration[
-        'operation_duration'].astype('int')
+    # 缺失时长不能视为零，否则会高估可用率。
+    operation_duration = pd.to_numeric(DF_operation_duration['operation_duration'], errors='coerce')
+    operation_duration = operation_duration.where(operation_duration > 0)
+    DF_operation_duration['停运率'] = pd.to_numeric(DF_operation_duration['outage_duration'], errors='coerce') / operation_duration
+    DF_operation_duration['故障率'] = pd.to_numeric(DF_operation_duration['fault_duration'], errors='coerce') / operation_duration
+    DF_operation_duration['离线率'] = pd.to_numeric(DF_operation_duration['offline_duration'], errors='coerce') / operation_duration
+    DF_operation_duration['可用率'] = 1 - DF_operation_duration['停运率'] - DF_operation_duration['故障率'] - DF_operation_duration['离线率']
+    other_columns = DF_operation_duration.columns.difference(
+        ['operation_duration', 'outage_duration', 'fault_duration', 'offline_duration',
+         '停运率', '故障率', '离线率', '可用率']
+    )
+    DF_operation_duration[other_columns] = DF_operation_duration[other_columns].fillna(0)
 
     # 筛选正常桩
 
@@ -6026,32 +5979,6 @@ def runcityPublic_typeMonitoring():
     t1 = str(last_year) + '%'
     t2 = str(year) + '%'
 
-    # 1. 查询 merchant_profit_amount（只保留 V2G 站点）
-    sql = f"""
-    SELECT 
-        b.merchant_profit_amount,
-        b.rec_month,
-        a.station_no,
-        a.city,
-        a.station_category,
-        a.dc_charge_point_count,
-        a.ac_charge_point_count
-    FROM (
-        SELECT * FROM charging_station cs
-        WHERE cs.station_name LIKE '%%V2G%%'
-          AND cs.merchant_nature = '电动公司'
-          AND cs.operation_status IN ('投运','退运','停运')
-    ) a
-    LEFT JOIN (
-        SELECT * FROM fin_rec_result_detail 
-        WHERE (rec_month LIKE '{t1}' OR rec_month LIKE '{t2}') 
-        AND merchant_id != 119
-    ) b
-    ON a.station_no = b.station_no
-    """
-    df_v2g_mpa = SQL(sql)
-    df_v2g_mpa = limit_month_data_to_report_month(df_v2g_mpa, 'rec_month')
-
     # 2. 查询 station_cba_org_data（只保留 V2G 站点）
     sql = f"""
     SELECT 
@@ -6077,37 +6004,15 @@ def runcityPublic_typeMonitoring():
         df_v2g_cba_org, 'cba_month'
     )
 
-    # 3. 查询 station_maintenance_cost（只保留 V2G 并满足维护费用 > 0）
-    sql = f"""
-    SELECT station_no, stat_time AS cba_month, maintenance_cost 
-    FROM dp_station_maintenance_cost1
-    WHERE 
-    (stat_time LIKE '{t1}' OR stat_time LIKE '{t2}')
-    AND maintenance_cost > 0
-    """
-    df_v2g_maintenance = SQL(sql)
-    df_v2g_maintenance = limit_month_data_to_report_month(
-        df_v2g_maintenance, 'cba_month'
-    )
-
-    # 4. 聚合 df_v2g_mpa，重命名列
-    df_v2g_mpa = df_v2g_mpa.fillna(0)
-    df_v2g_mpa = df_v2g_mpa[['rec_month', 'station_no', 'merchant_profit_amount']]
-    df_v2g_mpa = df_v2g_mpa.rename(columns={'rec_month': 'cba_month'})
-    df_v2g_mpa['cba_month'] = df_v2g_mpa['cba_month'].astype(str)  # ✅ 强制为字符串
-    df_v2g_mpa = df_v2g_mpa.groupby(['cba_month', 'station_no']).agg({'merchant_profit_amount': 'sum'}).reset_index()
-
-    # 5. 合并 df_v2g_cba_org + df_v2g_mpa
-    df_v2g_cba_org['cba_month'] = df_v2g_cba_org['cba_month'].astype(str)  # ✅ 保证两边类型一致
-    df_v2g_all_profit = pd.merge(df_v2g_cba_org, df_v2g_mpa, on=['station_no', 'cba_month'], how='left')
-    df_v2g_all_profit = df_v2g_all_profit.fillna(0)
+    df_v2g_all_profit = df_v2g_cba_org.fillna(0).copy()
+    df_v2g_all_profit['cba_month'] = df_v2g_all_profit['cba_month'].astype(str)
+    df_v2g_all_profit['merchant_profit_amount'] = df_v2g_all_profit['rec_cost_actual_rec_amount']
 
     # 6. 加入年份列
     df_v2g_all_profit['year'] = df_v2g_all_profit['cba_month'].str[:4]
 
     # 7. 合并维护费用
-    df_v2g_all_profit = pd.merge(df_v2g_all_profit, df_v2g_maintenance, on=['station_no', 'cba_month'], how='left')
-    df_v2g_all_profit['maintenance_cost'] = df_v2g_all_profit['maintenance_cost'].fillna(0)
+    df_v2g_all_profit['maintenance_cost'] = df_v2g_all_profit['om_cost_om'].fillna(0)
     # 将涉及计算的字段统一转为 float（避免 Decimal 报错）
     cols_to_float = [
         'rec_data_elec_fee_revenue',
@@ -6432,30 +6337,22 @@ def runcityPublic_typeMonitoring():
         M_next = str(int(M[:4]) + 1) + '01'
     else:
         M_next = M[:4] + str(int(M[4:]) + 1).rjust(2, "0")
-    sql = """
-    select b.merchant_profit_amount,b.rec_month,a.station_no,a.city,a.station_category,a.dc_charge_point_count,a.ac_charge_point_count from 
-    (SELECT 
-    cs.*
-    FROM
-    charging_station cs
-    LEFT JOIN rec_merchant rm ON cs.property_owner_merhant_id = rm.merchant_id
-    where 
-    cs.merchant_nature = '电动公司'
-    and cs.operation_status in ('投运','退运','停运')
-    ) a
-    left join 
-    (select * from fin_rec_result_detail where rec_month <%s and   merchant_id != 119 ) b
-    on a.station_no =b.station_no
-    """ % (M_next)
+    sql = f"""
+    SELECT station_no, cba_month AS rec_month,
+           COALESCE(rec_cost_actual_rec_amount, 0) AS merchant_profit_amount
+    FROM station_cba_org_data
+    WHERE cba_month < '{M_next}'
+    """
     fin_rec_result_detail = SQL(sql)
 
     sql = f"""
-    select station_no, stat_time as cba_month,maintenance_cost from  dp_station_maintenance_cost1
+    select station_no, cba_month, COALESCE(om_cost_om, 0) as maintenance_cost from station_cba_org_data
     where 
-    (stat_time <{M_next}) and maintenance_cost>0
+    cba_month < {M_next}
     """
     DF_maintenance = SQL(sql)
     DF_maintenance = DF_maintenance.groupby('station_no').agg({'maintenance_cost': 'sum'}).reset_index()
+    DF_maintenance['maintenance_cost'] = DF_maintenance['maintenance_cost'].astype(float) / 10000
     DF_1 = pd.merge(DF_station_investment, DF_cost_revenue, on='station_no', how='left')
 
     # 处理投运时间字段
@@ -6579,15 +6476,15 @@ def runcityPublic_typeMonitoring():
     df3 = SQL(sql3)
     sql3_1 = f"""
     SELECT maintenance.station_no,
-           maintenance.stat_time AS cba_month,
-           maintenance.maintenance_cost
-    FROM dp_station_maintenance_cost1 maintenance
-    WHERE maintenance.stat_time < {M_next}
-      AND maintenance.maintenance_cost > 0
+           maintenance.cba_month,
+           COALESCE(maintenance.om_cost_om, 0) AS maintenance_cost
+    FROM station_cba_org_data maintenance
+    WHERE maintenance.cba_month < {M_next}
       AND maintenance.station_no IN ({tech_station_code_sql})
     """
     df3_1 = SQL(sql3_1)
     df3_1 = df3_1.groupby('station_no').agg({'maintenance_cost': 'sum'}).reset_index()
+    df3_1['maintenance_cost'] = df3_1['maintenance_cost'].astype(float) / 10000
     df4 = fin_rec_result_detail[
         fin_rec_result_detail['station_no'].astype(str).isin(old_station_codes)
     ].fillna(0)
@@ -6740,21 +6637,12 @@ def runcityPublic_typeMonitoring():
         M_next = str(int(M[:4]) + 1) + '01'
     else:
         M_next = M[:4] + str(int(M[4:]) + 1).rjust(2, "0")
-    sql = """
-    select b.merchant_profit_amount,b.rec_month,a.station_no,a.city,a.station_category,a.dc_charge_point_count,a.ac_charge_point_count from 
-    (SELECT 
-    cs.*
-    FROM
-    charging_station cs
-    LEFT JOIN rec_merchant rm ON cs.property_owner_merhant_id = rm.merchant_id
-    where 
-    cs.merchant_nature = '电动公司'
-    and cs.operation_status in ('投运','退运','停运')
-    ) a
-    left join 
-    (select * from fin_rec_result_detail where rec_month <%s and   merchant_id != 119 ) b
-    on a.station_no =b.station_no
-    """ % (M_next)
+    sql = f"""
+    SELECT station_no, cba_month AS rec_month,
+           COALESCE(rec_cost_actual_rec_amount, 0) AS merchant_profit_amount
+    FROM station_cba_org_data
+    WHERE cba_month < '{M_next}'
+    """
     DFF_fin_rec_result_detail = SQL(sql)
     DFF_fin_rec_result_detail = limit_month_data_to_report_month(
         DFF_fin_rec_result_detail, 'rec_month'
@@ -7420,8 +7308,12 @@ def runcityPublic_typeMonitoring():
     # In[1293]:
 
 
-    DF_operation_duration0['可用率'] = DF_operation_duration0['normal_duration'].astype('int') / DF_operation_duration0[
-        'operation_duration'].astype('int')
+    operation_duration = pd.to_numeric(DF_operation_duration0['operation_duration'], errors='coerce')
+    operation_duration = operation_duration.where(operation_duration > 0)
+    DF_operation_duration0['停运率'] = pd.to_numeric(DF_operation_duration0['outage_duration'], errors='coerce') / operation_duration
+    DF_operation_duration0['故障率'] = pd.to_numeric(DF_operation_duration0['fault_duration'], errors='coerce') / operation_duration
+    DF_operation_duration0['离线率'] = pd.to_numeric(DF_operation_duration0['offline_duration'], errors='coerce') / operation_duration
+    DF_operation_duration0['可用率'] = 1 - DF_operation_duration0['停运率'] - DF_operation_duration0['故障率'] - DF_operation_duration0['离线率']
     # In[1294]:
 
     result_sheb_kyong = (
@@ -11145,7 +11037,7 @@ def runcityPublic_typeMonitoring():
          where merchant_nature = '电动公司'
            and operation_status in ('投运','停运')) c
         inner join
-        (select time,station_name,station_code,pile_status,normal_duration,operation_duration,city from dp_operation_duration
+        (select time,station_name,station_code,pile_status,operation_duration,outage_duration,fault_duration,offline_duration,city from dp_operation_duration
         where time like '%s' or time like '%s') d 
         on c.station_no = d.station_code
         """ % (t1, t2)
@@ -11154,13 +11046,18 @@ def runcityPublic_typeMonitoring():
         DF_operation_duration, 'time'
     )
 
-    DF_operation_duration = DF_operation_duration.fillna(0)
-
-    # 可用率计算
-
-    # 可用率=正常状态时长(秒)/在运时长(秒)
-    DF_operation_duration['可用率'] = DF_operation_duration['normal_duration'].astype('int') / DF_operation_duration[
-        'operation_duration'].astype('int')
+    # 缺失时长不能视为零，否则会高估可用率。
+    operation_duration = pd.to_numeric(DF_operation_duration['operation_duration'], errors='coerce')
+    operation_duration = operation_duration.where(operation_duration > 0)
+    DF_operation_duration['停运率'] = pd.to_numeric(DF_operation_duration['outage_duration'], errors='coerce') / operation_duration
+    DF_operation_duration['故障率'] = pd.to_numeric(DF_operation_duration['fault_duration'], errors='coerce') / operation_duration
+    DF_operation_duration['离线率'] = pd.to_numeric(DF_operation_duration['offline_duration'], errors='coerce') / operation_duration
+    DF_operation_duration['可用率'] = 1 - DF_operation_duration['停运率'] - DF_operation_duration['故障率'] - DF_operation_duration['离线率']
+    other_columns = DF_operation_duration.columns.difference(
+        ['operation_duration', 'outage_duration', 'fault_duration', 'offline_duration',
+         '停运率', '故障率', '离线率', '可用率']
+    )
+    DF_operation_duration[other_columns] = DF_operation_duration[other_columns].fillna(0)
 
     # 筛选正常桩
 
@@ -11323,21 +11220,6 @@ def runcityPublic_typeMonitoring():
     DF_cba_org_data['fin_cost_labor'] = DF_cba_org_data['fin_cost_labor'].astype(str).astype(float)
     print(DF_cba_org_data.info())
 
-    # 2、运维数据读取
-    sql = """
-    select station_no, stat_time as cba_month,maintenance_cost from  dp_station_maintenance_cost1
-    where 
-    (stat_time like '%s' or stat_time like '%s') and maintenance_cost>0
-    """ % (t1, t2)
-    DF_maintenance = SQL(sql)
-    DF_maintenance = limit_month_data_to_report_month(
-        DF_maintenance, 'cba_month'
-    )
-    # 运维费需要特殊处理，由万元变为元
-    DF_maintenance['maintenance_cost'] = DF_maintenance['maintenance_cost'].astype('float') * 10000
-    print(DF_maintenance.info())
-    DF_maintenance.head(1)
-
     # 3、租金
     sql = """
           SELECT cs.station_no, \
@@ -11357,49 +11239,8 @@ def runcityPublic_typeMonitoring():
           """
     DF_rent = SQL(sql)
 
-    # 4、商户分成数据
-    sql = """
-    select b.merchant_profit_amount,b.rec_month,a.station_no,a.city,a.station_category,a.dc_charge_point_count,a.ac_charge_point_count,a.operation_status from 
-    (SELECT 
-    cs.*
-    FROM
-    charging_station cs
-    LEFT JOIN rec_merchant rm ON cs.property_owner_merhant_id = rm.merchant_id
-    where 
-    cs.merchant_nature = '电动公司'
-    and cs.operation_status in ('投运','退运','停运')
-    ) a
-    left join 
-    (select * from fin_rec_result_detail where (rec_month like '%s' or  rec_month like '%s') and  merchant_id != 119 ) b
-    on a.station_no =b.station_no
-    """ % (t1, t2)
-    fin_rec_result_detail = SQL(sql)
-    fin_rec_result_detail = limit_month_data_to_report_month(
-        fin_rec_result_detail, 'rec_month'
-    )
-    fin_rec_result_detail['merchant_profit_amount'] = fin_rec_result_detail['merchant_profit_amount'].astype('float')
-    print(fin_rec_result_detail.info())
-
-    # 1、分成数据与运营数据合并
-
-    # 预处理填充空值
-    fin_rec_result_detail = fin_rec_result_detail.fillna(0)
-
-    # merchant_profit_amount为其他商户分成（成本数据）
-    fin_rec_result_detail = fin_rec_result_detail[['rec_month', 'station_no', 'merchant_profit_amount']]
-
-    # 更换列名便于匹配
-    fin_rec_result_detail = fin_rec_result_detail.rename(columns={'rec_month': 'cba_month'})
-
-    # 按年月汇总每个站点的分成数据
-    fin_rec_result_detail = fin_rec_result_detail.groupby(['cba_month', 'station_no']).agg(
-        {'merchant_profit_amount': 'sum'}).reset_index()
-
-    # 根据站点编号、年月关联分成数据，与运营数据
-    print('cba表关联分成数据前形状：', DF_cba_org_data.shape)
-    DF_cba_org_data = pd.merge(DF_cba_org_data, fin_rec_result_detail, on=['station_no', 'cba_month'], how='left')
-    DF_cba_org_data = DF_cba_org_data.fillna(0)
-    print('cba表关联分成数据后形状：', DF_cba_org_data.shape)
+    # 商户分成使用成本效益表中的清分费（实际清分金额）。
+    DF_cba_org_data['merchant_profit_amount'] = DF_cba_org_data['rec_cost_actual_rec_amount'].fillna(0)
 
     # 2、运营数据与运维费合并
     print('cba表关联运维费前形状：', DF_cba_org_data.shape)
@@ -11408,8 +11249,7 @@ def runcityPublic_typeMonitoring():
         lambda x: str(x)[:4] if pd.notnull(x) and len(str(x)) >= 4 else None
     )
 
-    DF_cba_org_data = pd.merge(DF_cba_org_data, DF_maintenance, on=['station_no', 'cba_month'], how='left')
-    DF_cba_org_data['maintenance_cost'] = DF_cba_org_data['maintenance_cost'].fillna(0)
+    DF_cba_org_data['maintenance_cost'] = DF_cba_org_data['om_cost_om'].fillna(0)
     print('cba表关联运维费后形状：', DF_cba_org_data.shape)
 
     # 收入数据合并
