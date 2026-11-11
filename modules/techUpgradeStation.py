@@ -1753,7 +1753,35 @@ def runtechUpgradeStation():
 
     # In[131]:
 
-    dfs = [grouped_means, yunyingxiaolv_means, jingjixiaoyi_means]
+    # 成效总览展示报告月，与下方趋势图的同月数据保持一致。
+    # 技改前的数据集已将上一年同期映射到展示月份；功率利用率保留趋势图的回溯口径。
+    overview_quality = pair_station_metric_means(
+        DF_pre_final[DF_pre_final['stat_time'] == M],
+        DF_post_final[DF_post_final['stat_time'] == M],
+        ['per_fault_rate', 'per_offline_rate', 'per_outage_rate', 'per_station_success_rate'],
+        ['post_fault_rate', 'post_offline_rate', 'post_outage_rate', 'post_station_success_rate'],
+        'quality'
+    )
+    overview_efficiency = pair_station_metric_means(
+        DF_pre_yunying_final[DF_pre_yunying_final['month'] == M],
+        DF_post_yunying_final[DF_post_yunying_final['month'] == M],
+        ['pre_time_rate', 'pre_per_gun', 'pre_pue'],
+        ['post_time_rate', 'post_per_gun', 'post_pue'],
+        'efficiency'
+    )
+    overview_economic = pair_station_metric_means(
+        DF_pre_xiaoxi_final[DF_pre_xiaoxi_final['month'] == M],
+        DF_post_xiaoxi_final[DF_post_xiaoxi_final['month'] == M],
+        ['pre_electricity_loss_ratio', 'pre_post_order_count', 'pre_trans_amount'],
+        ['post_electricity_loss_ratio', 'post_post_order_count', 'post_trans_amount'],
+        'economic'
+    )
+    overview_watt = pair_station_metric_means(
+        DF_pre_DF_watt_final[DF_pre_DF_watt_final['month'] == M],
+        DF_post_DF_watt_final[DF_post_DF_watt_final['month'] == M],
+        ['pre_benefit_per_watt'], ['post_benefit_per_watt'], 'watt'
+    )
+    dfs = [overview_quality, overview_efficiency, overview_economic, overview_watt]
 
     df_merged = reduce(lambda left, right: pd.merge(left, right, on='station_name', how='outer'), dfs)
 

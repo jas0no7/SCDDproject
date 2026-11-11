@@ -67,8 +67,8 @@ def runkeyStationInternalCompetition():
     WHERE 
         cs.merchant_nature = '电动公司'
         AND cs.operation_status IN ('投运', '退运', '停运')
-        AND DATE_FORMAT(cs.commissioning_time, '%Y%m') < '{}'
-    """.format(M)
+        AND cs.commissioning_time < '{}'
+    """.format(report_next_month_start_sql)
 
     df1 = SQL(sql1)
     df1.loc[df1['station_category'] == '高速', 'station_category'] = '高速公共'
@@ -2404,8 +2404,8 @@ def runkeyStationInternalCompetition():
     where 
     cs.merchant_nature = '电动公司'
     and cs.operation_status in ('投运','停运')
-    AND DATE_FORMAT(cs.commissioning_time, '%Y%m') < '{}'
-    """.format(M)
+    AND cs.commissioning_time < '{}'
+    """.format(report_next_month_start_sql)
     DF_SCDD = SQL(sql)
 
     # ### 建设规模
