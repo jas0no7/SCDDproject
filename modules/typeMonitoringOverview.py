@@ -387,8 +387,8 @@ def runtypeMonitoringOverview():
     select b.station_no,
     sum(IFNULL(b.rec_data_elec_fee_revenue,0)+IFNULL(b.rec_data_service_fee_revenue,0)+IFNULL(b.other_revenue_battery_swap_services,0)+
     IFNULL(b.other_revenue_op_subsidies,0)+IFNULL(b.other_revenue_build_subsidies,0)+IFNULL(b.other_revenue_access_control_barriers,0)+IFNULL(b.other_revenue_dr,0)) as revenue,
-    sum(IFNULL(b.rec_cost_elec_fee,0)+IFNULL(b.rec_cost_plat_service,0)+
-    IFNULL(b.rec_cost_rent,0)+IFNULL(b.om_cost_spare_parts,0)+IFNULL(b.om_cost_op_project,0)+IFNULL(b.fin_cost_depreciation+b.fin_cost_labor,0)) as cost
+    sum(IFNULL(b.rec_cost_elec_fee,0)+IFNULL(b.rec_cost_actual_rec_amount,0)+IFNULL(b.rec_cost_plat_service,0)+
+    IFNULL(b.rec_cost_rent,0)+IFNULL(b.om_cost_om,0)+IFNULL(b.om_cost_spare_parts,0)+IFNULL(b.om_cost_op_project,0)+IFNULL(b.fin_cost_depreciation,0)+IFNULL(b.fin_cost_labor,0)) as cost
     from 
     (SELECT 
     cs.*
@@ -469,14 +469,14 @@ def runtypeMonitoringOverview():
     DF_1 = DF_1.fillna(0)
     DF_1.loc[DF_1['station_category'] == '高速', 'station_category'] = '高速公共'
     DF_1['revenue'] = DF_1['revenue'].astype('float') / 10000
-    DF_1['cost'] = DF_1['cost'].astype('float') / 10000 + DF_1['rent'] / 10000
+    DF_1['cost'] = DF_1['cost'].astype('float') / 10000
     DF_1['investment_amount'] = DF_1['investment_amount'].astype('float') / 10000
     DF_1['merchant_profit_amount'] = DF_1['merchant_profit_amount'].astype('float') / 10000
     DF = pd.merge(DF_1, DF_subsidy, on='station_no', how='left')
     DF = DF.fillna(0)
     DF['in'] = DF['revenue'].astype('float') + DF['total_subsidy'].astype('float')
-    DF['out'] = DF['cost'].astype('float') + DF['investment_amount'].astype('float') + DF[
-        'merchant_profit_amount'].astype('float') + DF['maintenance_cost'].astype('float')
+    # 成本已含清分费/运维费/租金，回本支出只加投资额
+    DF['out'] = DF['cost'].astype('float') + DF['investment_amount'].astype('float')
 
     # 映射表只维护技改前后站点关系，所有金额仍从原业务表查询。
     tech_upgrade_mapping = SQL("""
@@ -513,11 +513,14 @@ def runtypeMonitoringOverview():
       ) AS revenue,
       SUM(
         IFNULL(b.rec_cost_elec_fee, 0) +
+        IFNULL(b.rec_cost_actual_rec_amount, 0) +
         IFNULL(b.rec_cost_plat_service, 0) +
         IFNULL(b.rec_cost_rent, 0) +
+        IFNULL(b.om_cost_om, 0) +
         IFNULL(b.om_cost_spare_parts, 0) +
         IFNULL(b.om_cost_op_project, 0) +
-        IFNULL(b.fin_cost_depreciation + b.fin_cost_labor, 0)
+        IFNULL(b.fin_cost_depreciation, 0) +
+        IFNULL(b.fin_cost_labor, 0)
       ) AS cost
     FROM (
       SELECT cs.*
@@ -576,8 +579,8 @@ def runtypeMonitoringOverview():
     df_temp['investment_amount'] = df_temp['investment_amount'] / 10000
     df_temp['merchant_profit_amount'] = df_temp['merchant_profit_amount'] / 10000
     df_temp['in'] = df_temp['revenue'].astype('float') + df_temp['total_subsidy'].astype('float')
-    df_temp['out'] = df_temp['cost'].astype('float') + df_temp['investment_amount'].astype('float') + df_temp[
-        'merchant_profit_amount'].astype('float') + df_temp['maintenance_cost'].astype('float')
+    # 成本已含清分费/运维费/租金，回本支出只加投资额
+    df_temp['out'] = df_temp['cost'].astype('float') + df_temp['investment_amount'].astype('float')
     # 一个技改后站点可能对应多个技改前站点，按 new_code 汇总旧站金额。
     old_codes_by_new_code = (
         tech_upgrade_mapping.groupby('new_code', sort=False)['old_code']
@@ -1179,7 +1182,6 @@ def runtypeMonitoringOverview():
     LEFT JOIN rec_merchant rm ON cs.property_owner_merhant_id = rm.merchant_id
     where 
     cs.merchant_nature = "电动公司"
-    and cs.operation_status in ('投运','退运','停运')
     ) a
     left join 
     (select * from station_cba_org_data where cba_month like '%s' or  cba_month like '%s' ) b
@@ -1198,6 +1200,8 @@ def runtypeMonitoringOverview():
     DF_cba_org_data['other_revenue_battery_swap_services'] = DF_cba_org_data[
         'other_revenue_battery_swap_services'].astype(
         str).astype(float)
+    DF_cba_org_data['other_revenue_op_subsidies'] = DF_cba_org_data['other_revenue_op_subsidies'].astype(str).astype(float)
+    DF_cba_org_data['other_revenue_build_subsidies'] = DF_cba_org_data['other_revenue_build_subsidies'].astype(str).astype(float)
     DF_cba_org_data['other_revenue_access_control_barriers'] = DF_cba_org_data[
         'other_revenue_access_control_barriers'].astype(str).astype(float)
     DF_cba_org_data['other_revenue_dr'] = DF_cba_org_data['other_revenue_dr'].astype(str).astype(float)
@@ -1214,25 +1218,6 @@ def runtypeMonitoringOverview():
     DF_cba_org_data['fin_cost_labor'] = DF_cba_org_data['fin_cost_labor'].astype(str).astype(float)
     print(DF_cba_org_data.info())
 
-    # 3、租金
-    sql = """
-          SELECT cs.station_no, \
-                 cs.property_owner_merhant_id, \
-                 rm.merchant_id, \
-                 JSON_UNQUOTE(JSON_EXTRACT(sr.profit_detail, '$.parkingFee')) AS parking_fee
-          FROM charging_station cs \
-                   LEFT JOIN \
-               rec_merchant_rec_station rmr ON cs.station_no = rmr.station_on \
-                   LEFT JOIN \
-               rec_merchant rm ON rmr.merchant_id = rm.merchant_id \
-                   LEFT JOIN \
-               scdd_rec_rules sr ON rm.merchant_id = sr.merchant_id
-          where cs.merchant_nature = "电动公司"
-            and JSON_UNQUOTE(JSON_EXTRACT(sr.profit_detail, '$.parkingFee')) IS NOT NULL \
- \
-          """
-    DF_rent = SQL(sql)
-
     # 商户分成使用成本效益表中的清分费（实际清分金额）。
     DF_cba_org_data['merchant_profit_amount'] = DF_cba_org_data['rec_cost_actual_rec_amount'].fillna(0)
 
@@ -1246,26 +1231,28 @@ def runtypeMonitoringOverview():
     DF_cba_org_data['maintenance_cost'] = DF_cba_org_data['om_cost_om'].fillna(0)
     print('cba表关联运维费后形状：', DF_cba_org_data.shape)
 
-    # 收入数据合并
-    DF_cba_org_data['rec_data'] = (DF_cba_org_data['rec_data_elec_fee_revenue'].fillna(0) +
-                                   DF_cba_org_data['rec_data_service_fee_revenue'].fillna(0) +
-                                   DF_cba_org_data['other_revenue_battery_swap_services'] +
-                                   DF_cba_org_data['other_revenue_access_control_barriers'].fillna(0) +
-                                   DF_cba_org_data['other_revenue_dr'].fillna(0))
-    # 成本数据合并
-    DF_cba_org_data['rec_cost'] = (DF_cba_org_data['rec_cost_elec_fee'].fillna(0) +
-                                   DF_cba_org_data['rec_cost_rent'].fillna(0) +
-                                   DF_cba_org_data['fin_cost_depreciation'] +
-                                   DF_cba_org_data['fin_cost_labor'].fillna(0) +
-                                   DF_cba_org_data['merchant_profit_amount'].fillna(0) +
-                                   DF_cba_org_data['maintenance_cost'])
-    # 租金合并
-    DF_cba_org_data = pd.merge(DF_cba_org_data, DF_rent[['station_no', 'parking_fee']], how='left',
-                               on='station_no').fillna(
-        0)
-
-    DF_cba_org_data['parking_fee'] = DF_cba_org_data['parking_fee'].astype('float')
-    DF_cba_org_data['rec_cost'] = DF_cba_org_data['rec_cost'] + DF_cba_org_data['parking_fee']
+    # 收入：清分电费/服务费 + 换电/运营补贴/建设补贴/道闸/需求响应
+    DF_cba_org_data['rec_data'] = (
+        DF_cba_org_data['rec_data_elec_fee_revenue'].fillna(0) +
+        DF_cba_org_data['rec_data_service_fee_revenue'].fillna(0) +
+        DF_cba_org_data['other_revenue_battery_swap_services'].fillna(0) +
+        DF_cba_org_data['other_revenue_op_subsidies'].fillna(0) +
+        DF_cba_org_data['other_revenue_build_subsidies'].fillna(0) +
+        DF_cba_org_data['other_revenue_access_control_barriers'].fillna(0) +
+        DF_cba_org_data['other_revenue_dr'].fillna(0)
+    )
+    # 成本：用电电费/清分费/平台服务费/租金 + 运维费/备件/运维项目 + 折旧/人工（全量计入，不再外加 parking_fee）
+    DF_cba_org_data['rec_cost'] = (
+        DF_cba_org_data['rec_cost_elec_fee'].fillna(0) +
+        DF_cba_org_data['rec_cost_actual_rec_amount'].fillna(0) +
+        DF_cba_org_data['rec_cost_plat_service'].fillna(0) +
+        DF_cba_org_data['rec_cost_rent'].fillna(0) +
+        DF_cba_org_data['om_cost_om'].fillna(0) +
+        DF_cba_org_data['om_cost_spare_parts'].fillna(0) +
+        DF_cba_org_data['om_cost_op_project'].fillna(0) +
+        DF_cba_org_data['fin_cost_depreciation'].fillna(0) +
+        DF_cba_org_data['fin_cost_labor'].fillna(0)
+    )
     DF_cba_org_data.head(1)
 
     DF_cba_org_data['gross_profit'] = DF_cba_org_data['rec_data'] - DF_cba_org_data['rec_cost']
@@ -1774,10 +1761,10 @@ def runtypeMonitoringOverview():
 
     sql = """
     select b.station_no,b.cba_month,
-    sum(b.rec_data_elec_fee_revenue+b.rec_data_service_fee_revenue+b.other_revenue_battery_swap_services+
-    b.other_revenue_op_subsidies+b.other_revenue_build_subsidies+b.other_revenue_access_control_barriers+b.other_revenue_dr) as revenue,
-    sum(b.rec_cost_elec_fee+b.rec_cost_actual_rec_amount+b.rec_cost_plat_service+
-    b.rec_cost_rent+b.om_cost_om+b.om_cost_spare_parts+b.om_cost_op_project+b.fin_cost_depreciation+b.fin_cost_labor) as cost
+    sum(IFNULL(b.rec_data_elec_fee_revenue,0)+IFNULL(b.rec_data_service_fee_revenue,0)+IFNULL(b.other_revenue_battery_swap_services,0)+
+    IFNULL(b.other_revenue_op_subsidies,0)+IFNULL(b.other_revenue_build_subsidies,0)+IFNULL(b.other_revenue_access_control_barriers,0)+IFNULL(b.other_revenue_dr,0)) as revenue,
+    sum(IFNULL(b.rec_cost_elec_fee,0)+IFNULL(b.rec_cost_actual_rec_amount,0)+IFNULL(b.rec_cost_plat_service,0)+
+    IFNULL(b.rec_cost_rent,0)+IFNULL(b.om_cost_om,0)+IFNULL(b.om_cost_spare_parts,0)+IFNULL(b.om_cost_op_project,0)+IFNULL(b.fin_cost_depreciation,0)+IFNULL(b.fin_cost_labor,0)) as cost
     from 
     (SELECT 
     cs.*
@@ -1830,8 +1817,8 @@ def runtypeMonitoringOverview():
     DF_rrentt_momth['investment_amount'] = DF_rrentt_momth['investment_amount'].fillna(0)
     DF_rrentt_momth['parking_fee'] = DF_rrentt_momth['parking_fee'].fillna(0)
     DF_rrentt_momth['cost'] = DF_rrentt_momth['cost'].fillna(0)
-    DF_rrentt_momth['out'] = DF_rrentt_momth['cost'].astype(float) + DF_rrentt_momth['investment_amount'].astype(
-        float) + DF_rrentt_momth['parking_fee'].astype(float)
+    # 成本已含清分费/运维费/租金，回本支出只加投资额
+    DF_rrentt_momth['out'] = DF_rrentt_momth['cost'].astype(float) + DF_rrentt_momth['investment_amount'].astype(float)
 
     # In[158]:
 
@@ -2992,7 +2979,6 @@ def runtypeMonitoringOverview():
     LEFT JOIN rec_merchant rm ON cs.property_owner_merhant_id = rm.merchant_id
     where 
     cs.merchant_nature = "电动公司"
-    and cs.operation_status in ('投运','退运','停运')
     ) a
     left join 
     (select * from station_cba_org_data where cba_month like '%s' or  cba_month like '%s' ) b
@@ -3009,6 +2995,8 @@ def runtypeMonitoringOverview():
     DF_cba_org_data['other_revenue_battery_swap_services'] = DF_cba_org_data[
         'other_revenue_battery_swap_services'].astype(
         str).astype(float)
+    DF_cba_org_data['other_revenue_op_subsidies'] = DF_cba_org_data['other_revenue_op_subsidies'].astype(str).astype(float)
+    DF_cba_org_data['other_revenue_build_subsidies'] = DF_cba_org_data['other_revenue_build_subsidies'].astype(str).astype(float)
     DF_cba_org_data['other_revenue_access_control_barriers'] = DF_cba_org_data[
         'other_revenue_access_control_barriers'].astype(str).astype(float)
     DF_cba_org_data['other_revenue_dr'] = DF_cba_org_data['other_revenue_dr'].astype(str).astype(float)
@@ -3025,25 +3013,6 @@ def runtypeMonitoringOverview():
     DF_cba_org_data['fin_cost_labor'] = DF_cba_org_data['fin_cost_labor'].astype(str).astype(float)
     print(DF_cba_org_data.info())
 
-    # 3、租金
-    sql = """
-          SELECT cs.station_no, \
-                 cs.property_owner_merhant_id, \
-                 rm.merchant_id, \
-                 JSON_UNQUOTE(JSON_EXTRACT(sr.profit_detail, '$.parkingFee')) AS parking_fee
-          FROM charging_station cs \
-                   LEFT JOIN \
-               rec_merchant_rec_station rmr ON cs.station_no = rmr.station_on \
-                   LEFT JOIN \
-               rec_merchant rm ON rmr.merchant_id = rm.merchant_id \
-                   LEFT JOIN \
-               scdd_rec_rules sr ON rm.merchant_id = sr.merchant_id
-          where cs.merchant_nature = "电动公司"
-            and JSON_UNQUOTE(JSON_EXTRACT(sr.profit_detail, '$.parkingFee')) IS NOT NULL \
- \
-          """
-    DF_rent = SQL(sql)
-
     # 商户分成使用成本效益表中的清分费（实际清分金额）。
     DF_cba_org_data['merchant_profit_amount'] = DF_cba_org_data['rec_cost_actual_rec_amount'].fillna(0)
 
@@ -3057,26 +3026,28 @@ def runtypeMonitoringOverview():
     DF_cba_org_data['maintenance_cost'] = DF_cba_org_data['om_cost_om'].fillna(0)
     print('cba表关联运维费后形状：', DF_cba_org_data.shape)
 
-    # 收入数据合并
-    DF_cba_org_data['rec_data'] = (DF_cba_org_data['rec_data_elec_fee_revenue'].fillna(0) +
-                                   DF_cba_org_data['rec_data_service_fee_revenue'].fillna(0) +
-                                   DF_cba_org_data['other_revenue_battery_swap_services'] +
-                                   DF_cba_org_data['other_revenue_access_control_barriers'].fillna(0) +
-                                   DF_cba_org_data['other_revenue_dr'].fillna(0))
-    # 成本数据合并
-    DF_cba_org_data['rec_cost'] = (DF_cba_org_data['rec_cost_elec_fee'].fillna(0) +
-                                   DF_cba_org_data['rec_cost_rent'].fillna(0) +
-                                   DF_cba_org_data['fin_cost_depreciation'] +
-                                   DF_cba_org_data['fin_cost_labor'].fillna(0) +
-                                   DF_cba_org_data['merchant_profit_amount'].fillna(0) +
-                                   DF_cba_org_data['maintenance_cost'])
-    # 租金合并
-    DF_cba_org_data = pd.merge(DF_cba_org_data, DF_rent[['station_no', 'parking_fee']], how='left',
-                               on='station_no').fillna(
-        0)
-
-    DF_cba_org_data['parking_fee'] = DF_cba_org_data['parking_fee'].astype('float')
-    DF_cba_org_data['rec_cost'] = DF_cba_org_data['rec_cost'] + DF_cba_org_data['parking_fee']
+    # 收入：清分电费/服务费 + 换电/运营补贴/建设补贴/道闸/需求响应
+    DF_cba_org_data['rec_data'] = (
+        DF_cba_org_data['rec_data_elec_fee_revenue'].fillna(0) +
+        DF_cba_org_data['rec_data_service_fee_revenue'].fillna(0) +
+        DF_cba_org_data['other_revenue_battery_swap_services'].fillna(0) +
+        DF_cba_org_data['other_revenue_op_subsidies'].fillna(0) +
+        DF_cba_org_data['other_revenue_build_subsidies'].fillna(0) +
+        DF_cba_org_data['other_revenue_access_control_barriers'].fillna(0) +
+        DF_cba_org_data['other_revenue_dr'].fillna(0)
+    )
+    # 成本：用电电费/清分费/平台服务费/租金 + 运维费/备件/运维项目 + 折旧/人工（全量计入，不再外加 parking_fee）
+    DF_cba_org_data['rec_cost'] = (
+        DF_cba_org_data['rec_cost_elec_fee'].fillna(0) +
+        DF_cba_org_data['rec_cost_actual_rec_amount'].fillna(0) +
+        DF_cba_org_data['rec_cost_plat_service'].fillna(0) +
+        DF_cba_org_data['rec_cost_rent'].fillna(0) +
+        DF_cba_org_data['om_cost_om'].fillna(0) +
+        DF_cba_org_data['om_cost_spare_parts'].fillna(0) +
+        DF_cba_org_data['om_cost_op_project'].fillna(0) +
+        DF_cba_org_data['fin_cost_depreciation'].fillna(0) +
+        DF_cba_org_data['fin_cost_labor'].fillna(0)
+    )
     DF_cba_org_data.head(1)
 
     DF_cba_org_data['gross_profit'] = DF_cba_org_data['rec_data'] - DF_cba_org_data['rec_cost']
