@@ -158,6 +158,7 @@ def runkeyStationInternalCompetition():
     sum(IFNULL(b.rec_cost_elec_fee,0)+
     IFNULL(b.rec_cost_rent,0)+
     IFNULL(b.fin_cost_depreciation+b.fin_cost_labor,0)) As cost,
+    sum(IFNULL(b.rec_cost_elec_fee,0)+IFNULL(b.rec_cost_rent,0)+IFNULL(b.fin_cost_labor,0)) As gross_cost,
     sum(IFNULL(b.plat_data_charging_volume,0)) As plat_data_charging_volume,
     sum(IFNULL(b.rec_cost_elec_cons,0)) As rec_cost_elec_cons,
     sum(IFNULL(b.rec_data_elec_fee_revenue,0)) As rec_data_elec_fee_revenue,
@@ -188,6 +189,7 @@ def runkeyStationInternalCompetition():
     # 数据类型转换
     df3['revenue'] = df3['revenue'].astype(str).str.replace(',', '').astype(float)
     df3['cost'] = df3['cost'].astype(str).str.replace(',', '').astype(float)
+    df3['gross_cost'] = df3['gross_cost'].astype(str).str.replace(',', '').astype(float)
     df3.info()
 
     # In[247]:
@@ -878,7 +880,7 @@ def runkeyStationInternalCompetition():
 
     # 步骤2：创建income1基础表
     income1 = df3[df3['station_no'].isin(df1_process['station_no'])][
-        ['station_no', 'cba_month', 'revenue', 'cost']
+        ['station_no', 'cba_month', 'revenue', 'cost', 'gross_cost']
     ].copy()
     print(income1.shape)
     print(income1.info())
@@ -934,6 +936,11 @@ def runkeyStationInternalCompetition():
     income1['income'] = (
                 income1['revenue'] - income1['cost'] - income1['parking_fee'] - income1['merchant_profit_amount'] -
                 income1['maintenance_cost'])
+    # 图表中的当月毛利不扣除折旧，income 保留原有口径。
+    income1['gross_profit'] = (
+        income1['revenue'] - income1['gross_cost'] - income1['parking_fee']
+        - income1['merchant_profit_amount'] - income1['maintenance_cost']
+    )
     print(income1.info())
 
     # In[297]:
@@ -1347,7 +1354,7 @@ def runkeyStationInternalCompetition():
             for _, row in group.iterrows():
                 if row['cba_month'] in month_to_index:
                     idx = month_to_index[row['cba_month']]
-                    income_vals[idx] = row['income']
+                    income_vals[idx] = row['gross_profit']
                     balance_vals[idx] = row['balance'] if pd.notna(row['balance']) else None
 
             # 修改balance_vals：让balance＜0的值等于该cba_month前面balance＞0的值
@@ -1408,7 +1415,7 @@ def runkeyStationInternalCompetition():
             for _, row in group.iterrows():
                 if row['cba_month'] in month_to_index and pd.notna(row['balance']):
                     month_str = axisData[month_to_index[row['cba_month']]]
-                    if row['income'] >= row['balance']:
+                    if row['gross_profit'] >= row['balance']:
                         profit_months.append(month_str)
                     else:
                         loss_months.append(month_str)
@@ -1456,7 +1463,7 @@ def runkeyStationInternalCompetition():
             for _, row in group.iterrows():
                 if row['cba_month'] in month_to_index:
                     idx = month_to_index[row['cba_month']]
-                    income_vals[idx] = row['income']
+                    income_vals[idx] = row['gross_profit']
                     balance_vals[idx] = row['balance'] if pd.notna(row['balance']) else None
 
             # 获取cba_month中的年份
@@ -1500,7 +1507,7 @@ def runkeyStationInternalCompetition():
             for _, row in group.iterrows():
                 if row['cba_month'] in month_to_index and pd.notna(row['balance']):
                     month_str = axisData[month_to_index[row['cba_month']]]
-                    if row['income'] >= row['balance']:
+                    if row['gross_profit'] >= row['balance']:
                         profit_months.append(month_str)
                     else:
                         loss_months.append(month_str)

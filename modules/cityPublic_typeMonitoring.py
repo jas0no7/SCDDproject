@@ -1446,7 +1446,9 @@ def runcityPublic_typeMonitoring():
     )
     DF_cba_org_data.head(1)
 
-    DF_cba_org_data['gross_profit'] = DF_cba_org_data['rec_data'] - DF_cba_org_data['rec_cost']
+    # 毛利不扣除折旧；rec_cost 保留完整成本口径供其他指标使用。
+    DF_cba_org_data['gross_profit'] = (DF_cba_org_data['rec_data'] - DF_cba_org_data['rec_cost']
+                                       + DF_cba_org_data['fin_cost_depreciation'].fillna(0))
     DF_cba_org_data['rec_data'] = DF_cba_org_data['rec_data'].astype(float)
     DF_cba_org_data['rec_cost'] = DF_cba_org_data['rec_cost'].astype(float)
     DF_cba_org_data['gross_profit'] = DF_cba_org_data['gross_profit'].astype(float)
@@ -6049,6 +6051,12 @@ def runcityPublic_typeMonitoring():
             df_v2g_all_profit['fin_cost_labor'].fillna(0)
     )
 
+    # V2G 毛利不扣除折旧，保留 rec_cost 原有口径。
+    df_v2g_all_profit['gross_profit'] = (
+        df_v2g_all_profit['rec_data'] - df_v2g_all_profit['rec_cost']
+        + df_v2g_all_profit['fin_cost_depreciation'].fillna(0)
+    )
+
     # In[1191]:
 
     df_v2g_all_profit
@@ -6601,7 +6609,8 @@ def runcityPublic_typeMonitoring():
     sum(IFNULL(b.rec_data_elec_fee_revenue,0)+IFNULL(b.rec_data_service_fee_revenue,0)+IFNULL(b.other_revenue_battery_swap_services,0)+
     IFNULL(b.other_revenue_op_subsidies,0)+IFNULL(b.other_revenue_build_subsidies,0)+IFNULL(b.other_revenue_access_control_barriers,0)+IFNULL(b.other_revenue_dr,0)) as revenue,
     sum(IFNULL(b.rec_cost_elec_fee,0)+IFNULL(b.rec_cost_actual_rec_amount,0)+IFNULL(b.rec_cost_plat_service,0)+
-    IFNULL(b.rec_cost_rent,0)+IFNULL(b.om_cost_om,0)+IFNULL(b.om_cost_spare_parts,0)+IFNULL(b.om_cost_op_project,0)+IFNULL(b.fin_cost_depreciation,0)+IFNULL(b.fin_cost_labor,0)) as cost
+    IFNULL(b.rec_cost_rent,0)+IFNULL(b.om_cost_om,0)+IFNULL(b.om_cost_spare_parts,0)+IFNULL(b.om_cost_op_project,0)+IFNULL(b.fin_cost_depreciation,0)+IFNULL(b.fin_cost_labor,0)) as cost,
+    sum(IFNULL(b.fin_cost_depreciation,0)) as depreciation
     from 
     (SELECT 
     cs.*
@@ -6700,7 +6709,7 @@ def runcityPublic_typeMonitoring():
 
     # In[1214]:
 
-    df345['gross_profit'] = df345['revenue'].astype('float') - df345['cost'].astype('float')
+    df345['gross_profit'] = df345['revenue'].astype('float') - df345['cost'].astype('float') + df345['depreciation'].astype('float')
 
     # In[1215]:
 
@@ -7679,7 +7688,7 @@ def runcityPublic_typeMonitoring():
 
     # In[1320]:
 
-    df345zk['gross_profit'] = df345zk['revenue'].astype('float') - df345zk['cost'].astype('float')
+    df345zk['gross_profit'] = df345zk['revenue'].astype('float') - df345zk['cost'].astype('float') + df345zk['depreciation'].astype('float')
     zk_result_jing_profile = (
         df345zk.groupby('station_no')['gross_profit']
         .sum()
@@ -8253,7 +8262,7 @@ def runcityPublic_typeMonitoring():
         .round(2)
     )
 
-    df345gs['gross_profit'] = df345gs['revenue'].astype('float') - df345gs['cost'].astype('float')
+    df345gs['gross_profit'] = df345gs['revenue'].astype('float') - df345gs['cost'].astype('float') + df345gs['depreciation'].astype('float')
     gs_result_jing_profile = (
         df345gs.groupby('station_no')['gross_profit']
         .sum()
@@ -8726,7 +8735,7 @@ def runcityPublic_typeMonitoring():
         .round(2)
     )
 
-    df345gongjiao['gross_profit'] = df345gongjiao['revenue'].astype('float') - df345gongjiao['cost'].astype('float')
+    df345gongjiao['gross_profit'] = df345gongjiao['revenue'].astype('float') - df345gongjiao['cost'].astype('float') + df345gongjiao['depreciation'].astype('float')
     gongjiao_result_jing_profile = (
         df345gongjiao.groupby('station_no')['gross_profit']
         .sum()
@@ -9211,7 +9220,7 @@ def runcityPublic_typeMonitoring():
         .round(2)
     )
 
-    df345xiaoqu['gross_profit'] = df345xiaoqu['revenue'].astype('float') - df345xiaoqu['cost'].astype('float')
+    df345xiaoqu['gross_profit'] = df345xiaoqu['revenue'].astype('float') - df345xiaoqu['cost'].astype('float') + df345xiaoqu['depreciation'].astype('float')
     xiaoqu_result_jing_profile = (
         df345xiaoqu.groupby('station_no')['gross_profit']
         .sum()
@@ -9687,7 +9696,7 @@ def runcityPublic_typeMonitoring():
         .round(2)
     )
 
-    df345qita['gross_profit'] = df345qita['revenue'].astype('float') - df345qita['cost'].astype('float')
+    df345qita['gross_profit'] = df345qita['revenue'].astype('float') - df345qita['cost'].astype('float') + df345qita['depreciation'].astype('float')
     qita_result_jing_profile = (
         df345qita.groupby('station_no')['gross_profit']
         .sum()
@@ -10157,7 +10166,8 @@ def runcityPublic_typeMonitoring():
     print("=== 收入 ===")
     print(v2g_result_earn)
 
-    df345v2g['gross_profit'] = df345v2g['rec_data'].astype(float) - df345v2g['rec_cost'].astype(float)
+    df345v2g['gross_profit'] = (df345v2g['rec_data'].astype(float) - df345v2g['rec_cost'].astype(float)
+                                 + df345v2g['fin_cost_depreciation'].fillna(0).astype(float))
     v2g_result_jing_profile = (
         df345v2g.groupby('station_no')['gross_profit']
         .sum()
@@ -11264,7 +11274,9 @@ def runcityPublic_typeMonitoring():
     )
     DF_cba_org_data.head(1)
 
-    DF_cba_org_data['gross_profit'] = DF_cba_org_data['rec_data'] - DF_cba_org_data['rec_cost']
+    # 毛利不扣除折旧；rec_cost 保留完整成本口径供其他指标使用。
+    DF_cba_org_data['gross_profit'] = (DF_cba_org_data['rec_data'] - DF_cba_org_data['rec_cost']
+                                       + DF_cba_org_data['fin_cost_depreciation'].fillna(0))
     DF_cba_org_data['rec_data'] = DF_cba_org_data['rec_data'].astype(float)
     DF_cba_org_data['rec_cost'] = DF_cba_org_data['rec_cost'].astype(float)
     DF_cba_org_data['gross_profit'] = DF_cba_org_data['gross_profit'].astype(float)

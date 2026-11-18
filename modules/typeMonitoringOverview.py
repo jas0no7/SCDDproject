@@ -1255,7 +1255,9 @@ def runtypeMonitoringOverview():
     )
     DF_cba_org_data.head(1)
 
-    DF_cba_org_data['gross_profit'] = DF_cba_org_data['rec_data'] - DF_cba_org_data['rec_cost']
+    # 毛利不扣除折旧；rec_cost 保留完整成本口径供其他指标使用。
+    DF_cba_org_data['gross_profit'] = (DF_cba_org_data['rec_data'] - DF_cba_org_data['rec_cost']
+                                       + DF_cba_org_data['fin_cost_depreciation'].fillna(0))
     DF_cba_org_data['rec_data'] = DF_cba_org_data['rec_data'].astype(float)
     DF_cba_org_data['rec_cost'] = DF_cba_org_data['rec_cost'].astype(float)
     DF_cba_org_data['gross_profit'] = DF_cba_org_data['gross_profit'].astype(float)
@@ -3050,7 +3052,9 @@ def runtypeMonitoringOverview():
     )
     DF_cba_org_data.head(1)
 
-    DF_cba_org_data['gross_profit'] = DF_cba_org_data['rec_data'] - DF_cba_org_data['rec_cost']
+    # 毛利不扣除折旧；rec_cost 保留完整成本口径供其他指标使用。
+    DF_cba_org_data['gross_profit'] = (DF_cba_org_data['rec_data'] - DF_cba_org_data['rec_cost']
+                                       + DF_cba_org_data['fin_cost_depreciation'].fillna(0))
     DF_cba_org_data['rec_data'] = DF_cba_org_data['rec_data'].astype(float)
     DF_cba_org_data['rec_cost'] = DF_cba_org_data['rec_cost'].astype(float)
     DF_cba_org_data['gross_profit'] = DF_cba_org_data['gross_profit'].astype(float)

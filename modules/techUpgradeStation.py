@@ -644,7 +644,7 @@ def runtechUpgradeStation():
     # In[36]:
 
     DF_ab1 = pd.merge(DF_ab, DF_charging_station, on='station_no', how='inner')
-    DF_ab1 = DF_ab1[['station_name', 'total_power', 'ac_count', 'dc_count', 'avg_ac_power', 'avg_dc_power', 'manufacturers', 'total_guns']]
+    DF_ab1 = DF_ab1[['station_name', 'station_capacity', 'ac_count', 'dc_count', 'avg_ac_power', 'avg_dc_power', 'manufacturers', 'total_guns']]
 
     # In[37]:
 
@@ -661,7 +661,7 @@ def runtechUpgradeStation():
         if old_row is not None and new_row is not None:
             combined = {
                 'pre_station_name': old_name,
-                'pre_station_capacity': old_row['total_power'],
+                'pre_station_capacity': old_row['station_capacity'],
                 'pre_ac_power': old_row['avg_ac_power'],
                 'pre_dc_power': old_row['avg_dc_power'],
                 'pre_ac_count': old_row['ac_count'],
@@ -670,7 +670,7 @@ def runtechUpgradeStation():
                 'pre_guns': old_row['total_guns'],
 
                 'post_station_name': new_name,
-                'post_station_capacity': new_row['total_power'],
+                'post_station_capacity': new_row['station_capacity'],
                 'post_ac_power': new_row['avg_ac_power'],
                 'post_dc_power': new_row['avg_dc_power'],
                 'post_ac_count': new_row['ac_count'],
